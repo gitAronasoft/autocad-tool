@@ -11,7 +11,11 @@ from typing import Dict, List, Tuple, Optional
 # the newest OpenAI model is "gpt-5-mini" which was released August 7, 2025.
 # do not change this unless explicitly requested by the user
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-openai = OpenAI(api_key=OPENAI_API_KEY)
+openai = None
+if OPENAI_API_KEY:
+    openai = OpenAI(api_key=OPENAI_API_KEY)
+else:
+    print("Warning: OPENAI_API_KEY not found. AI analysis will be disabled.")
 
 class ArchitecturalAnalyzer:
     """
@@ -60,6 +64,9 @@ class ArchitecturalAnalyzer:
         """
         Determine if the drawing is a floor plan or elevation using AI
         """
+        if not openai:
+            raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
+        
         base64_image = self.encode_image_to_base64(image_path)
         
         response = openai.chat.completions.create(
@@ -83,7 +90,8 @@ class ArchitecturalAnalyzer:
                     ]
                 }
             ],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            timeout=20.0
         )
         
         content = response.choices[0].message.content
@@ -96,6 +104,9 @@ class ArchitecturalAnalyzer:
         """
         Analyze floor plan to detect walls, rooms, and spaces
         """
+        if not openai:
+            raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
+        
         base64_image = self.encode_image_to_base64(image_path)
         
         prompt = """
@@ -153,7 +164,8 @@ class ArchitecturalAnalyzer:
                     ]
                 }
             ],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            timeout=20.0
         )
         
         content = response.choices[0].message.content
@@ -166,6 +178,9 @@ class ArchitecturalAnalyzer:
         """
         Analyze elevation to detect doors, windows, and their dimensions
         """
+        if not openai:
+            raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
+        
         base64_image = self.encode_image_to_base64(image_path)
         
         prompt = """
@@ -220,7 +235,8 @@ class ArchitecturalAnalyzer:
                     ]
                 }
             ],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            timeout=20.0
         )
         
         content = response.choices[0].message.content
@@ -253,14 +269,15 @@ class ArchitecturalAnalyzer:
         """
         Analyze geometric data using AI to enhance wall classification and spatial understanding
         """
-        if not OPENAI_API_KEY:
-            print("Warning: No OpenAI API key found. Using basic geometric analysis only.")
-            return self._create_basic_analysis(geometric_data, spatial_analysis)
+        if not openai:
+            raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
 
         try:
+            print("Starting OpenAI API call for geometric analysis...")
             # Prepare geometric data summary for AI analysis
             analysis_prompt = self._create_geometric_analysis_prompt(geometric_data, spatial_analysis)
             
+            # Add timeout to prevent hanging on large files
             response = openai.chat.completions.create(
                 model="gpt-5-mini",
                 messages=[
@@ -275,7 +292,8 @@ class ArchitecturalAnalyzer:
                         "content": analysis_prompt
                     }
                 ],
-                response_format={"type": "json_object"}
+                response_format={"type": "json_object"},
+                timeout=30.0  # 30 second timeout to prevent hanging
             )
             
             content = response.choices[0].message.content
@@ -290,9 +308,9 @@ class ArchitecturalAnalyzer:
             return enhanced_analysis
 
         except Exception as e:
+            error_msg = f"AI analysis failed: {str(e)}"
             print(f"Error in AI geometric analysis: {e}")
-            print("Falling back to basic geometric analysis")
-            return self._create_basic_analysis(geometric_data, spatial_analysis)
+            raise Exception(error_msg)
 
     def _create_geometric_analysis_prompt(self, geometric_data: Dict, spatial_analysis: Dict) -> str:
         """Create a prompt for AI analysis of geometric data"""

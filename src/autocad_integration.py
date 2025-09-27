@@ -630,7 +630,8 @@ class AutoCADIntegration:
                 print("AI analysis integration completed")
                 
             except Exception as e:
-                print(f"AI analysis failed, continuing with geometric analysis only: {e}")
+                # Propagate AI errors to the user
+                raise Exception(f"AI analysis error: {str(e)}")
         
         # Step 4: Classify wall types (potentially enhanced by AI)
         classified_walls = self.classify_wall_types_enhanced(spatial_analysis)
