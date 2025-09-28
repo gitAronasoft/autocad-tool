@@ -432,13 +432,19 @@ class AutoCADIntegration:
             return analysis
 
     def _group_connected_walls(self, wall_segments: List[Dict]) -> List[Dict]:
-        """Group wall segments that are connected to each other"""
+        """Group wall segments that are connected to each other (optimized with spatial indexing)"""
         if not wall_segments:
             return []
 
+        # Use spatial indexing for large datasets
+        if len(wall_segments) > 2000:
+            print(f"Large dataset detected ({len(wall_segments)} segments). Using spatial indexing optimization.")
+            return self._group_connected_walls_spatial(wall_segments)
+
         groups = []
         used_segments = set()
-        tolerance = 1.0  # Distance tolerance for considering points connected
+        tolerance = 1.0
+        max_iterations = len(wall_segments) * 2  # More reasonable iteration limit
 
         for i, segment in enumerate(wall_segments):
             if i in used_segments:
@@ -455,8 +461,10 @@ class AutoCADIntegration:
 
             # Find all segments connected to this group
             found_connection = True
-            while found_connection:
+            iterations = 0
+            while found_connection and iterations < max_iterations:
                 found_connection = False
+                iterations += 1
                 
                 for j, other_segment in enumerate(wall_segments):
                     if j in used_segments:
@@ -470,9 +478,11 @@ class AutoCADIntegration:
                         group['bounds'] = self._update_bounds(group['bounds'], other_segment)
                         used_segments.add(j)
                         found_connection = True
+                        break  # Process one connection per iteration
 
             groups.append(group)
 
+        print(f"Grouped {len(wall_segments)} segments into {len(groups)} wall groups")
         return groups
 
     def _segments_connected(self, group_segments: List[Dict], segment: Dict, tolerance: float) -> bool:
@@ -494,6 +504,116 @@ class AutoCADIntegration:
                 return True
         
         return False
+
+    def _segments_connected_simple(self, group_segments: List[Dict], segment: Dict, tolerance: float) -> bool:
+        """Simplified version for performance - only check connection to most recent segment in group"""
+        if not group_segments:
+            return False
+            
+        # Only check connection to the last added segment for better performance
+        last_segment = group_segments[-1]
+        seg_start, seg_end = segment['start'], segment['end']
+        group_start, group_end = last_segment['start'], last_segment['end']
+        
+        # Check if any endpoints are close enough
+        distances = [
+            math.sqrt((seg_start[0] - group_start[0])**2 + (seg_start[1] - group_start[1])**2),
+            math.sqrt((seg_start[0] - group_end[0])**2 + (seg_start[1] - group_end[1])**2),
+            math.sqrt((seg_end[0] - group_start[0])**2 + (seg_end[1] - group_start[1])**2),
+            math.sqrt((seg_end[0] - group_end[0])**2 + (seg_end[1] - group_end[1])**2)
+        ]
+        
+        return min(distances) <= tolerance
+
+    def _group_connected_walls_spatial(self, wall_segments: List[Dict]) -> List[Dict]:
+        """Optimized wall grouping using spatial indexing for large datasets"""
+        if not wall_segments:
+            return []
+
+        # Create spatial index for faster lookups
+        tolerance = 1.0
+        grid_size = 10.0  # Grid cell size for spatial indexing
+        spatial_grid = defaultdict(list)
+
+        # Index all segments by their spatial location
+        for i, segment in enumerate(wall_segments):
+            start, end = segment['start'], segment['end']
+            points = [start, end]
+            
+            for point in points:
+                grid_x = int(point[0] // grid_size)
+                grid_y = int(point[1] // grid_size)
+                # Add to multiple grid cells to handle tolerance
+                for dx in [-1, 0, 1]:
+                    for dy in [-1, 0, 1]:
+                        spatial_grid[(grid_x + dx, grid_y + dy)].append(i)
+
+        groups = []
+        used_segments = set()
+        
+        for i, segment in enumerate(wall_segments):
+            if i in used_segments:
+                continue
+
+            # Start a new group with this segment
+            group = {
+                'segments': [segment],
+                'total_length': segment['length'],
+                'layers': {segment['layer']},
+                'bounds': self._get_segment_bounds(segment)
+            }
+            used_segments.add(i)
+
+            # Use BFS to find connected segments
+            to_process = [i]
+            
+            while to_process:
+                current_idx = to_process.pop(0)
+                current_segment = wall_segments[current_idx]
+                
+                # Find potential connections using spatial grid
+                candidates = set()
+                start, end = current_segment['start'], current_segment['end']
+                for point in [start, end]:
+                    grid_x = int(point[0] // grid_size)
+                    grid_y = int(point[1] // grid_size)
+                    for dx in [-1, 0, 1]:
+                        for dy in [-1, 0, 1]:
+                            candidates.update(spatial_grid.get((grid_x + dx, grid_y + dy), []))
+
+                # Check actual connections
+                for candidate_idx in candidates:
+                    if candidate_idx in used_segments:
+                        continue
+                    
+                    candidate_segment = wall_segments[candidate_idx]
+                    if self._segments_directly_connected(current_segment, candidate_segment, tolerance):
+                        group['segments'].append(candidate_segment)
+                        group['total_length'] += candidate_segment['length']
+                        group['layers'].add(candidate_segment['layer'])
+                        group['bounds'] = self._update_bounds(group['bounds'], candidate_segment)
+                        used_segments.add(candidate_idx)
+                        to_process.append(candidate_idx)
+
+            groups.append(group)
+
+        print(f"Spatial indexing: Grouped {len(wall_segments)} segments into {len(groups)} wall groups")
+        return groups
+
+    def _segments_directly_connected(self, seg1: Dict, seg2: Dict, tolerance: float) -> bool:
+        """Check if two segments are directly connected (optimized)"""
+        seg1_start, seg1_end = seg1['start'], seg1['end']
+        seg2_start, seg2_end = seg2['start'], seg2['end']
+        
+        # Check if any endpoints are close enough
+        distances = [
+            math.sqrt((seg1_start[0] - seg2_start[0])**2 + (seg1_start[1] - seg2_start[1])**2),
+            math.sqrt((seg1_start[0] - seg2_end[0])**2 + (seg1_start[1] - seg2_end[1])**2),
+            math.sqrt((seg1_end[0] - seg2_start[0])**2 + (seg1_end[1] - seg2_start[1])**2),
+            math.sqrt((seg1_end[0] - seg2_end[0])**2 + (seg1_end[1] - seg2_end[1])**2)
+        ]
+        
+        return min(distances) <= tolerance
 
     def _get_segment_bounds(self, segment: Dict) -> Dict:
         """Get bounding box for a segment"""
@@ -608,30 +728,50 @@ class AutoCADIntegration:
         # Step 2: Analyze spatial relationships
         spatial_analysis = self.analyze_spatial_relationships(entities)
         
-        # Step 3: Use AI to enhance analysis if analyzer is provided
+        # Step 3: Use AI to enhance analysis if analyzer is provided and API key is available
         if analyzer:
-            print("Integrating AI analysis with geometric data...")
+            print("Checking AI analysis availability...")
             try:
-                # Prepare metadata for AI analysis
-                analysis_metadata = {
-                    'entities_extracted': {
-                        'lines': len(entities.get('lines', [])),
-                        'polylines': len(entities.get('lwpolylines', [])) + len(entities.get('polylines', [])),
-                        'arcs': len(entities.get('arcs', [])),
-                        'circles': len(entities.get('circles', []))
-                    },
-                    'wall_groups_found': len(spatial_analysis.get('wall_groups', [])),
-                    'building_bounds': spatial_analysis.get('building_bounds')
-                }
-                
-                # Use AI to enhance the spatial analysis
-                enhanced_analysis = analyzer.analyze_geometric_data(analysis_metadata, spatial_analysis)
-                spatial_analysis = enhanced_analysis
-                print("AI analysis integration completed")
+                # Check if OpenAI API key is available
+                import os
+                if os.environ.get("OPENAI_API_KEY"):
+                    print("Integrating AI analysis with geometric data...")
+                    # Prepare metadata for AI analysis
+                    analysis_metadata = {
+                        'entities_extracted': {
+                            'lines': len(entities.get('lines', [])),
+                            'polylines': len(entities.get('lwpolylines', [])) + len(entities.get('polylines', [])),
+                            'arcs': len(entities.get('arcs', [])),
+                            'circles': len(entities.get('circles', []))
+                        },
+                        'wall_groups_found': len(spatial_analysis.get('wall_groups', [])),
+                        'building_bounds': spatial_analysis.get('building_bounds')
+                    }
+                    
+                    # Use AI to enhance the spatial analysis with timeout handling
+                    import signal
+                    
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError("AI analysis timed out")
+                    
+                    # Set alarm for 15 seconds
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(15)
+                    
+                    try:
+                        enhanced_analysis = analyzer.analyze_geometric_data(analysis_metadata, spatial_analysis)
+                        spatial_analysis = enhanced_analysis
+                        print("AI analysis integration completed")
+                    except TimeoutError:
+                        print("AI analysis timed out. Proceeding with geometric-only analysis.")
+                    finally:
+                        signal.alarm(0)  # Cancel alarm
+                else:
+                    print("OpenAI API key not configured. Proceeding with geometric-only analysis.")
                 
             except Exception as e:
-                # Propagate AI errors to the user
-                raise Exception(f"AI analysis error: {str(e)}")
+                print(f"AI analysis failed: {str(e)}. Proceeding with geometric-only analysis.")
+                # Continue with geometric analysis instead of failing completely
         
         # Step 4: Classify wall types (potentially enhanced by AI)
         classified_walls = self.classify_wall_types_enhanced(spatial_analysis)

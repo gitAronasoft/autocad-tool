@@ -277,7 +277,7 @@ class ArchitecturalAnalyzer:
             # Prepare geometric data summary for AI analysis
             analysis_prompt = self._create_geometric_analysis_prompt(geometric_data, spatial_analysis)
             
-            # Add timeout to prevent hanging on large files
+            # Add shorter timeout to prevent hanging on large files
             response = openai.chat.completions.create(
                 model="gpt-5-mini",
                 messages=[
@@ -293,7 +293,7 @@ class ArchitecturalAnalyzer:
                     }
                 ],
                 response_format={"type": "json_object"},
-                timeout=30.0  # 30 second timeout to prevent hanging
+                timeout=10.0  # Reduced to 10 second timeout
             )
             
             content = response.choices[0].message.content
