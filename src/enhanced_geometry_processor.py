@@ -214,13 +214,19 @@ class EnhancedGeometryProcessor:
     
     def _group_connected_segments(self, segments: List[Dict]) -> List[Dict]:
         """
-        Group segments that are connected to form continuous walls
+        Group segments that are connected to form continuous walls (optimized version)
         """
         connection_tolerance = 2.0  # Units
         groups = []
         used_segments = set()
         
-        for i, segment in enumerate(segments):
+        # Limit processing for performance - only process reasonable number of segments
+        max_segments_to_process = min(len(segments), 1000)  # Limit to prevent hanging
+        segments_to_process = segments[:max_segments_to_process]
+        
+        print(f"Processing {len(segments_to_process)} segments for grouping (limited from {len(segments)} total)")
+        
+        for i, segment in enumerate(segments_to_process):
             if i in used_segments:
                 continue
             
@@ -233,11 +239,16 @@ class EnhancedGeometryProcessor:
             }
             used_segments.add(i)
             
-            # Find connected segments
+            # Find connected segments with iteration limit to prevent infinite loops
+            max_iterations = 50  # Prevent infinite loops
+            iteration_count = 0
             changed = True
-            while changed:
+            
+            while changed and iteration_count < max_iterations:
                 changed = False
-                for j, other_segment in enumerate(segments):
+                iteration_count += 1
+                
+                for j, other_segment in enumerate(segments_to_process):
                     if j in used_segments:
                         continue
                     
@@ -249,10 +260,11 @@ class EnhancedGeometryProcessor:
                         group['bounds'] = self._calculate_segment_bounds(group['segments'])
                         used_segments.add(j)
                         changed = True
+                        break  # Process one connection per iteration to avoid excessive computation
             
             groups.append(group)
         
-        print(f"Grouped {len(segments)} segments into {len(groups)} wall groups")
+        print(f"Grouped {len(segments_to_process)} segments into {len(groups)} wall groups")
         return groups
     
     def _segments_connected(self, group_segments: List[Dict], new_segment: Dict, tolerance: float) -> bool:
