@@ -796,22 +796,23 @@ class AutoCADIntegration:
             }
         }
 
-        # Convert classified walls to the expected format
-        for i, wall in enumerate(classified_walls):
-            layer_name = self._generate_layer_name_enhanced(wall, i)
-            
-            result['spaces'].append({
-                'type': wall['type'],
-                'coordinates': wall['coordinates'],
-                'layer_name': layer_name,
-                'metadata': {
-                    'total_length': wall['total_length'],
-                    'segment_count': wall['segment_count'],
-                    'bounds': wall['bounds'],
-                    'ai_classification': wall.get('ai_classification', {}),
-                    'confidence': wall.get('ai_classification', {}).get('confidence', 0.5)
-                }
-            })
+        # Group walls by type and create continuous boundary traces (as requested by user)
+        boundary_groups = self._create_boundary_traces(classified_walls)
+        
+        # Convert boundary traces to spaces for drawing
+        for boundary_type, boundary_data in boundary_groups.items():
+            if boundary_data['coordinates']:
+                result['spaces'].append({
+                    'type': boundary_type,
+                    'coordinates': boundary_data['coordinates'],
+                    'layer_name': boundary_data['layer_name'],
+                    'metadata': {
+                        'total_length': boundary_data['total_length'],
+                        'wall_groups_merged': boundary_data['groups_merged'],
+                        'bounds': boundary_data['bounds'],
+                        'is_continuous_boundary': True
+                    }
+                })
 
         print(f"Analysis complete: found {len(result['spaces'])} wall spaces")
         return result
@@ -834,24 +835,8 @@ class AutoCADIntegration:
             for i, group in enumerate(analysis['wall_groups']):
                 group_bounds = group['bounds']
                 
-                # Start with geometric classification
-                wall_type = 'interior'  # Default
-                
-                # Check if this wall group is on the building perimeter
-                is_perimeter = (
-                    abs(group_bounds['min_x'] - building_bounds['min_x']) <= perimeter_tolerance or
-                    abs(group_bounds['max_x'] - building_bounds['max_x']) <= perimeter_tolerance or
-                    abs(group_bounds['min_y'] - building_bounds['min_y']) <= perimeter_tolerance or
-                    abs(group_bounds['max_y'] - building_bounds['max_y']) <= perimeter_tolerance
-                )
-                
-                if is_perimeter:
-                    wall_type = 'exterior'
-
-                # Check for garage walls based on layer names
-                layer_names = [layer.lower() for layer in group['layers']]
-                if any('garage' in layer for layer in layer_names):
-                    wall_type = 'garage_adjacent'
+                # Enhanced wall classification logic
+                wall_type = self._classify_wall_type_enhanced(group, building_bounds, perimeter_tolerance)
 
                 # Override with AI classification if available and confident
                 ai_classification = None
@@ -891,8 +876,373 @@ class AutoCADIntegration:
             # Fall back to basic classification
             return self.classify_wall_types(analysis)
 
+    def _create_boundary_traces(self, classified_walls: List[Dict]) -> Dict:
+        """
+        Create clean, organized architectural element traces
+        Instead of merging all walls into chaotic overlapping lines, create proper organized layers
+        """
+        print(f"Creating organized architectural traces from {len(classified_walls)} wall groups...")
+        
+        # Identify building perimeter (exterior boundary)
+        exterior_perimeter = self._find_building_perimeter(classified_walls)
+        
+        # Identify room boundaries and interior features
+        room_boundaries = self._find_room_boundaries(classified_walls)
+        
+        # Detect architectural features (doors, windows, etc.)
+        architectural_features = self._detect_architectural_features(classified_walls)
+        
+        # Detect floor type for proper layer naming
+        floor_type = self._detect_floor_type(classified_walls, exterior_perimeter)
+        
+        # Validate and fix geometric issues
+        if exterior_perimeter:
+            exterior_perimeter = self._validate_and_fix_boundary(exterior_perimeter, 'exterior')
+        
+        validated_rooms = []
+        for room in room_boundaries:
+            validated_room = self._validate_and_fix_boundary(room, 'interior')
+            if validated_room:  # Only include valid rooms
+                validated_rooms.append(validated_room)
+        room_boundaries = validated_rooms
+        
+        # Create organized layer structure
+        boundary_groups = {}
+        
+        # Add exterior perimeter if found
+        if exterior_perimeter:
+            boundary_groups['exterior'] = {
+                'coordinates': exterior_perimeter['coordinates'],
+                'layer_name': f'{floor_type}_exterior_perimeter',
+                'total_length': exterior_perimeter['total_length'],
+                'groups_merged': exterior_perimeter['groups_merged'],
+                'bounds': exterior_perimeter['bounds']
+            }
+            print(f"Building exterior perimeter: {len(exterior_perimeter['coordinates'])} points, "
+                  f"length {exterior_perimeter['total_length']:.1f}")
+        
+        # Add room boundaries (limit to avoid chaos)
+        max_rooms_to_show = 5  # Limit room boundaries to keep output clean
+        for i, room in enumerate(room_boundaries[:max_rooms_to_show]):
+            room_layer_name = f'{floor_type}_room_boundary_{i+1}'
+            boundary_groups[f'room_{i+1}'] = {
+                'coordinates': room['coordinates'],
+                'layer_name': room_layer_name,
+                'total_length': room['total_length'],
+                'groups_merged': room['groups_merged'],
+                'bounds': room['bounds']
+            }
+            print(f"Room boundary {i+1}: {len(room['coordinates'])} points, "
+                  f"length {room['total_length']:.1f}")
+        
+        # Add architectural features with unique identifiers
+        feature_count = 0
+        for feature_type, features in architectural_features.items():
+            for i, feature in enumerate(features[:3]):  # Limit features to avoid clutter
+                feature_count += 1
+                unique_id = f"{feature_type}_{i+1}_{hash(str(feature['coordinates']))%1000:03d}"
+                boundary_groups[unique_id] = {
+                    'coordinates': feature['coordinates'],
+                    'layer_name': f"{floor_type}_{feature_type}_{i+1}",
+                    'total_length': 0,  # Features don't have length
+                    'groups_merged': 1,
+                    'bounds': feature['bounds'],
+                    'feature_type': feature_type,
+                    'unique_id': unique_id,
+                    'dimensions': feature['dimensions']
+                }
+                print(f"Detected {feature_type} {i+1}: {feature['dimensions']} (ID: {unique_id})")
+        
+        print(f"Created {len(boundary_groups)} organized architectural layers ({feature_count} features detected)")
+        return boundary_groups
+    
+    def _find_building_perimeter(self, classified_walls: List[Dict]) -> Optional[Dict]:
+        """Find the main building exterior perimeter"""
+        # Look for walls classified as exterior or at building boundaries
+        perimeter_walls = [wall for wall in classified_walls if wall['type'] == 'exterior']
+        
+        if not perimeter_walls:
+            return None
+        
+        # For now, take the largest exterior wall group as the main perimeter
+        main_perimeter = max(perimeter_walls, key=lambda w: w['total_length'])
+        
+        return {
+            'coordinates': main_perimeter['coordinates'],
+            'total_length': main_perimeter['total_length'],
+            'groups_merged': 1,
+            'bounds': main_perimeter['bounds']
+        }
+    
+    def _find_room_boundaries(self, classified_walls: List[Dict]) -> List[Dict]:
+        """Identify individual room boundaries from interior walls"""
+        # Group interior walls by spatial proximity to identify room boundaries
+        interior_walls = [wall for wall in classified_walls if wall['type'] == 'interior']
+        
+        if not interior_walls:
+            return []
+        
+        # For now, limit to a reasonable number of room boundaries to avoid chaos
+        max_rooms = 10
+        room_boundaries = []
+        
+        # Sort walls by total length (longer walls likely form main room boundaries)
+        sorted_walls = sorted(interior_walls, key=lambda w: w['total_length'], reverse=True)
+        
+        for i, wall in enumerate(sorted_walls[:max_rooms]):
+            # Skip walls that are too small (likely fixtures or details)
+            if wall['total_length'] < 50:  # Minimum wall length threshold
+                continue
+                
+            room_boundaries.append({
+                'coordinates': wall['coordinates'],
+                'total_length': wall['total_length'],
+                'groups_merged': 1,
+                'bounds': wall['bounds']
+            })
+        
+        return room_boundaries
+
+    def _classify_wall_type_enhanced(self, group: Dict, building_bounds: Dict, perimeter_tolerance: float) -> str:
+        """
+        Enhanced wall classification with better logic for architectural elements
+        """
+        group_bounds = group['bounds']
+        segments = group['segments']
+        
+        # Check if this wall group is on the building perimeter
+        is_perimeter = (
+            abs(group_bounds['min_x'] - building_bounds['min_x']) <= perimeter_tolerance or
+            abs(group_bounds['max_x'] - building_bounds['max_x']) <= perimeter_tolerance or
+            abs(group_bounds['min_y'] - building_bounds['min_y']) <= perimeter_tolerance or
+            abs(group_bounds['max_y'] - building_bounds['max_y']) <= perimeter_tolerance
+        )
+        
+        # Check for garage walls based on layer names
+        layer_names = [layer.lower() for layer in group['layers']]
+        has_garage_indicator = any('garage' in layer for layer in layer_names)
+        
+        # Analyze wall characteristics
+        total_length = group['total_length']
+        segment_count = len(segments)
+        
+        # Classification logic
+        if is_perimeter and total_length > 100:  # Long perimeter walls are likely exterior
+            return 'exterior'
+        elif has_garage_indicator:
+            return 'garage_adjacent'
+        elif total_length > 200:  # Very long walls are likely main structural walls
+            return 'exterior' if is_perimeter else 'interior'
+        elif segment_count == 1 and total_length < 50:  # Short single segments might be doors/windows
+            return 'feature'  # Will be processed separately for door/window detection
+        else:
+            return 'interior'
+
+    def _detect_architectural_features(self, classified_walls: List[Dict]) -> Dict:
+        """
+        Detect doors, windows, and other architectural features
+        """
+        features = {
+            'doors': [],
+            'windows': [],
+            'openings': []
+        }
+        
+        # Look for feature-type walls (short segments that might be doors/windows)
+        feature_walls = [wall for wall in classified_walls if wall['type'] == 'feature']
+        
+        for feature in feature_walls:
+            # Analyze feature characteristics to classify as door or window
+            total_length = feature['total_length']
+            bounds = feature['bounds']
+            width = bounds['max_x'] - bounds['min_x']
+            height = bounds['max_y'] - bounds['min_y']
+            
+            if total_length < 20:  # Very small features might be windows
+                features['windows'].append({
+                    'coordinates': feature['coordinates'],
+                    'bounds': bounds,
+                    'layer_name': 'windows',
+                    'dimensions': {'width': width, 'height': height}
+                })
+            elif total_length < 50:  # Medium features might be doors
+                features['doors'].append({
+                    'coordinates': feature['coordinates'],
+                    'bounds': bounds,
+                    'layer_name': 'doors',
+                    'dimensions': {'width': width, 'height': height}
+                })
+            else:  # Larger features are general openings
+                features['openings'].append({
+                    'coordinates': feature['coordinates'],
+                    'bounds': bounds,
+                    'layer_name': 'openings',
+                    'dimensions': {'width': width, 'height': height}
+                })
+        
+        return features
+
+    def _detect_floor_type(self, classified_walls: List[Dict], exterior_perimeter: Optional[Dict]) -> str:
+        """
+        Detect floor type (basement, main_floor, second_floor) based on architectural cues
+        """
+        # Analyze wall characteristics and spatial patterns
+        if not classified_walls:
+            return 'main_floor'  # Default
+        
+        # Count different wall types
+        exterior_count = len([w for w in classified_walls if w['type'] == 'exterior'])
+        interior_count = len([w for w in classified_walls if w['type'] == 'interior'])
+        garage_count = len([w for w in classified_walls if w['type'] == 'garage_adjacent'])
+        
+        # Analyze building dimensions if exterior perimeter exists
+        if exterior_perimeter:
+            bounds = exterior_perimeter['bounds']
+            building_area = (bounds['max_x'] - bounds['min_x']) * (bounds['max_y'] - bounds['min_y'])
+            
+            # Very large buildings might indicate main floor
+            if building_area > 500000:  # Large building
+                return 'main_floor'
+        
+        # Analyze layer names for clues
+        all_layer_names = []
+        for wall in classified_walls:
+            all_layer_names.extend(wall.get('layer_suggestions', []))
+        
+        layer_text = ' '.join(all_layer_names).lower()
+        
+        # Look for basement indicators
+        if any(keyword in layer_text for keyword in ['basement', 'foundation', 'lower', 'cellar']):
+            return 'basement'
+        
+        # Look for second floor indicators  
+        if any(keyword in layer_text for keyword in ['second', 'upper', '2nd', 'floor_2']):
+            return 'second_floor'
+            
+        # Look for garage indicators (often main floor)
+        if garage_count > 0 or 'garage' in layer_text:
+            return 'main_floor'
+        
+        # Default classification based on wall patterns
+        if interior_count > exterior_count * 3:  # Many interior walls suggest main living floor
+            return 'main_floor'
+        elif exterior_count > interior_count:  # More exterior walls might suggest basement (foundation)
+            return 'basement'
+        else:
+            return 'main_floor'  # Default
+
+    def _validate_and_fix_boundary(self, boundary: Dict, boundary_type: str) -> Optional[Dict]:
+        """
+        Validate and fix geometric issues in boundaries
+        Ensures boundaries are closed, non-self-intersecting loops suitable for professional CAD workflows
+        """
+        if not boundary or 'coordinates' not in boundary:
+            print(f"Rejected: {boundary_type} boundary missing coordinates")
+            return None
+            
+        coords = boundary['coordinates']
+        
+        # STRICT: Reject boundaries with insufficient points
+        if len(coords) < 3:
+            print(f"Rejected: {boundary_type} boundary has insufficient points ({len(coords)}) - minimum 3 required")
+            return None
+        
+        validated_coords = []
+        
+        # Remove duplicate consecutive points with stricter tolerance
+        for i, coord in enumerate(coords):
+            if i == 0 or self._distance_between_points(coord, coords[i-1]) > 0.5:  # Stricter tolerance
+                validated_coords.append(coord)
+        
+        # STRICT: After deduplication, must still have at least 3 points
+        if len(validated_coords) < 3:
+            print(f"Rejected: {boundary_type} boundary has insufficient unique points after deduplication ({len(validated_coords)})")
+            return None
+        
+        # Ensure boundary is closed
+        first_point = validated_coords[0]
+        last_point = validated_coords[-1]
+        
+        if self._distance_between_points(first_point, last_point) > 1.0:  # Not closed
+            validated_coords.append(first_point)  # Close the boundary
+            print(f"Fixed: Closed {boundary_type} boundary by connecting endpoints")
+        
+        # STRICT: Check and reject self-intersections
+        if self._has_obvious_self_intersection(validated_coords):
+            print(f"Rejected: {boundary_type} boundary has self-intersections - cannot be used for professional CAD workflows")
+            return None
+        
+        # STRICT: Final validation - ensure we have a valid polygon
+        if len(validated_coords) < 4:  # Need at least 3 unique points + closure
+            print(f"Rejected: {boundary_type} boundary insufficient for closed polygon ({len(validated_coords)} points)")
+            return None
+        
+        # Calculate area to ensure polygon is valid
+        area = self._calculate_polygon_area(validated_coords)
+        if abs(area) < 10.0:  # Very small area might indicate degenerate polygon
+            print(f"Rejected: {boundary_type} boundary has very small area ({area:.2f}) - likely degenerate")
+            return None
+        
+        # Update boundary with validated coordinates
+        validated_boundary = boundary.copy()
+        validated_boundary['coordinates'] = validated_coords
+        validated_boundary['is_closed'] = True
+        validated_boundary['validation_status'] = 'validated'
+        validated_boundary['polygon_area'] = abs(area)
+        
+        # Recalculate bounds with validated coordinates
+        x_coords = [coord[0] for coord in validated_coords]
+        y_coords = [coord[1] for coord in validated_coords]
+        validated_boundary['bounds'] = {
+            'min_x': min(x_coords), 'max_x': max(x_coords),
+            'min_y': min(y_coords), 'max_y': max(y_coords)
+        }
+        
+        print(f"Validated: {boundary_type} boundary - {len(validated_coords)} points, area {abs(area):.1f}")
+        return validated_boundary
+    
+    def _calculate_polygon_area(self, coords: List[Tuple[float, float]]) -> float:
+        """Calculate polygon area using shoelace formula"""
+        if len(coords) < 3:
+            return 0.0
+        
+        area = 0.0
+        n = len(coords)
+        for i in range(n):
+            j = (i + 1) % n
+            area += coords[i][0] * coords[j][1]
+            area -= coords[j][0] * coords[i][1]
+        return area / 2.0
+    
+    def _distance_between_points(self, p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+        """Calculate Euclidean distance between two points"""
+        return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+    
+    def _has_obvious_self_intersection(self, coords: List[Tuple[float, float]]) -> bool:
+        """Simple check for obvious self-intersections"""
+        # This is a basic check - in production, use more sophisticated algorithms
+        if len(coords) < 4:
+            return False
+        
+        # Check if any non-adjacent line segments intersect
+        for i in range(len(coords) - 1):
+            for j in range(i + 2, len(coords) - 1):
+                if j == len(coords) - 2 and i == 0:  # Skip checking first and last segments (they should meet)
+                    continue
+                if self._line_segments_intersect(coords[i], coords[i+1], coords[j], coords[j+1]):
+                    return True
+        return False
+    
+    def _line_segments_intersect(self, p1, p2, p3, p4) -> bool:
+        """Check if two line segments intersect"""
+        # Using cross product method
+        def ccw(A, B, C):
+            return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+        
+        return ccw(p1, p3, p4) != ccw(p2, p3, p4) and ccw(p1, p2, p3) != ccw(p1, p2, p4)
+
     def _generate_layer_name_enhanced(self, wall: Dict, index: int) -> str:
-        """Generate layer name using AI suggestions when available"""
+        """Generate layer name using AI suggestions when available (legacy method - now replaced by boundary tracing)"""
         
         # Check if AI suggested a layer name
         ai_classification = wall.get('ai_classification', {})
