@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 import math
 from collections import defaultdict
+from .enhanced_geometry_processor import EnhancedGeometryProcessor
 
 class AutoCADIntegration:
     """
@@ -15,10 +16,18 @@ class AutoCADIntegration:
     def __init__(self):
         self.current_doc = None
         self.modelspace = None
+        self.enhanced_processor = EnhancedGeometryProcessor()
     
     def load_dxf_file(self, file_path: str) -> bool:
-        """Load an existing DXF file"""
+        """Load an existing DXF or DWG file"""
         try:
+            # Check file extension
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            if file_ext == '.dwg':
+                print("DWG files are not directly supported by ezdxf. Please convert to DXF format.")
+                return False
+            
             # Type-safe access to ezdxf.readfile
             readfile_func = getattr(ezdxf, 'readfile', None)
             if readfile_func is None:
@@ -29,7 +38,9 @@ class AutoCADIntegration:
             print(f"Successfully loaded DXF file: {file_path}")
             return True
         except Exception as e:
-            print(f"Error loading DXF file: {e}")
+            print(f"Error loading file: {e}")
+            if 'DWG' in str(e).upper():
+                print("Note: DWG files require conversion to DXF format for processing.")
             return False
     
     def create_new_dxf(self) -> bool:
@@ -131,6 +142,23 @@ class AutoCADIntegration:
             print(f"Error drawing line: {e}")
             return False
     
+    def draw_arc(self, center: Tuple[float, float], radius: float, start_angle: float, 
+                 end_angle: float, layer_name: str = "0"):
+        """Draw an arc"""
+        if self.current_doc is None or self.modelspace is None:
+            print("No DXF document loaded")
+            return False
+        
+        try:
+            center_3d = (center[0], center[1], 0)
+            arc = self.modelspace.add_arc(center_3d, radius, start_angle, end_angle)
+            arc.dxf.layer = layer_name
+            print(f"Drew arc with radius {radius} on layer {layer_name}")
+            return True
+        except Exception as e:
+            print(f"Error drawing arc: {e}")
+            return False
+    
     def save_dxf(self, output_path: str):
         """Save the current DXF document"""
         if self.current_doc is None:
@@ -163,13 +191,19 @@ class AutoCADIntegration:
     
     def execute_autocad_commands(self, analysis_result: Dict):
         """
-        Execute AutoCAD drawing commands based on AI analysis results
+        Execute AutoCAD drawing commands based on enhanced analysis results
         """
         if self.current_doc is None:
             print("No DXF document loaded. Creating new document.")
             self.create_new_dxf()
         
         commands_executed = 0
+        
+        # Handle enhanced drawing commands if available
+        if 'drawing_commands' in analysis_result:
+            return self._execute_enhanced_commands(analysis_result['drawing_commands'])
+        
+        # Fallback to legacy command processing
         
         if analysis_result['drawing_type'] == 'floor_plan':
             print("Processing floor plan analysis...")
@@ -209,6 +243,102 @@ class AutoCADIntegration:
         
         print(f"Executed {commands_executed} drawing commands")
         return commands_executed
+    
+    def _execute_enhanced_commands(self, drawing_commands: List[Dict]) -> int:
+        """
+        Execute enhanced drawing commands from the enhanced geometry processor
+        """
+        commands_executed = 0
+        layers_created = set()
+        
+        print(f"Executing {len(drawing_commands)} enhanced drawing commands...")
+        
+        for command in drawing_commands:
+            try:
+                action = command.get('action')
+                
+                if action == 'create_layer':
+                    layer_name = command.get('layer_name')
+                    color = command.get('color', 7)
+                    linetype = command.get('linetype', 'CONTINUOUS')
+                    
+                    if layer_name and layer_name not in layers_created:
+                        success = self.create_layer(layer_name, color, linetype)
+                        if success:
+                            layers_created.add(layer_name)
+                            commands_executed += 1
+                
+                elif action == 'draw_line':
+                    start_point = command.get('start_point')
+                    end_point = command.get('end_point')
+                    layer_name = command.get('layer_name', '0')
+                    
+                    if start_point and end_point:
+                        success = self.draw_line(start_point, end_point, layer_name)
+                        if success:
+                            commands_executed += 1
+                
+                elif action == 'draw_rectangle':
+                    point1 = command.get('point1')
+                    point2 = command.get('point2')
+                    layer_name = command.get('layer_name', '0')
+                    
+                    if point1 and point2:
+                        success = self.draw_rectangle(point1, point2, layer_name)
+                        if success:
+                            commands_executed += 1
+                
+                elif action == 'draw_arc':
+                    center = command.get('center')
+                    radius = command.get('radius')
+                    start_angle = command.get('start_angle', 0)
+                    end_angle = command.get('end_angle', 90)
+                    layer_name = command.get('layer_name', '0')
+                    
+                    if center and radius:
+                        success = self.draw_arc(center, radius, start_angle, end_angle, layer_name)
+                        if success:
+                            commands_executed += 1
+                
+                elif action == 'draw_polyline':
+                    coordinates = command.get('coordinates')
+                    layer_name = command.get('layer_name', '0')
+                    
+                    if coordinates and len(coordinates) >= 2:
+                        success = self.draw_polyline(coordinates, layer_name)
+                        if success:
+                            commands_executed += 1
+                
+                else:
+                    print(f"Unknown command action: {action}")
+            
+            except Exception as e:
+                print(f"Error executing command {action}: {e}")
+        
+        print(f"Successfully executed {commands_executed} enhanced drawing commands")
+        return commands_executed
+    
+    def export_measurements(self, measurements: Dict, output_dir: str = 'outputs') -> Dict[str, str]:
+        """
+        Export measurements to CSV and JSON formats
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        
+        csv_path = os.path.join(output_dir, 'measurements.csv')
+        json_path = os.path.join(output_dir, 'measurements.json')
+        
+        results = {}
+        
+        # Export to CSV
+        if self.enhanced_processor.export_measurements_csv(measurements, csv_path):
+            results['csv'] = csv_path
+        
+        # Export to JSON
+        if self.enhanced_processor.export_measurements_json(measurements, json_path):
+            results['json'] = json_path
+        
+        return results
     
     def get_layer_color(self, element_type: str) -> int:
         """Get appropriate color for different element types"""
@@ -342,18 +472,6 @@ class AutoCADIntegration:
             print(f"Error extracting geometric entities: {e}")
             return {}
 
-    def _calculate_polygon_area(self, points: List[Tuple[float, float]]) -> float:
-        """Calculate the area of a polygon using the shoelace formula"""
-        if len(points) < 3:
-            return 0
-        
-        area = 0
-        n = len(points)
-        for i in range(n):
-            j = (i + 1) % n
-            area += points[i][0] * points[j][1]
-            area -= points[j][0] * points[i][1]
-        return abs(area) / 2
 
     def analyze_spatial_relationships(self, entities: Dict[str, List]) -> Dict:
         """
@@ -367,11 +485,14 @@ class AutoCADIntegration:
         }
 
         try:
+            print("Analyzing spatial relationships...")
+            
             # Combine all linear entities (lines and polylines) for wall analysis
             wall_segments = []
             
             # Add lines as wall segments
-            for line in entities['lines']:
+            print(f"Processing {len(entities.get('lines', []))} lines...")
+            for line in entities.get('lines', []):
                 wall_segments.append({
                     'start': line['start'],
                     'end': line['end'],
@@ -381,7 +502,10 @@ class AutoCADIntegration:
                 })
             
             # Add polyline segments
-            for polyline in entities['lwpolylines'] + entities['polylines']:
+            total_polylines = len(entities.get('lwpolylines', [])) + len(entities.get('polylines', []))
+            print(f"Processing {total_polylines} polylines...")
+            
+            for polyline in entities.get('lwpolylines', []) + entities.get('polylines', []):
                 points = polyline['points']
                 for i in range(len(points) - 1):
                     start, end = points[i], points[i + 1]
@@ -394,10 +518,14 @@ class AutoCADIntegration:
                         'type': 'polyline_segment'
                     })
 
+            print(f"Total wall segments to analyze: {len(wall_segments)}")
+            
             # Group wall segments by connectivity and orientation
+            print("Grouping connected wall segments...")
             wall_groups = self._group_connected_walls(wall_segments)
             analysis['wall_groups'] = wall_groups
 
+            print("Calculating building bounds...")
             # Find building bounds
             all_points = []
             for segment in wall_segments:
@@ -416,7 +544,8 @@ class AutoCADIntegration:
                 }
 
             # Identify enclosed areas from closed polylines
-            for polyline in entities['lwpolylines'] + entities['polylines']:
+            print("Identifying enclosed areas...")
+            for polyline in entities.get('lwpolylines', []) + entities.get('polylines', []):
                 if polyline.get('closed', False) and polyline.get('area', 0) > 0:
                     analysis['enclosed_areas'].append({
                         'points': polyline['points'],
@@ -424,11 +553,13 @@ class AutoCADIntegration:
                         'layer': polyline['layer']
                     })
 
-            print(f"Found {len(wall_groups)} wall groups, {len(analysis['enclosed_areas'])} enclosed areas")
+            print(f"Spatial analysis complete: {len(wall_groups)} wall groups, {len(analysis['enclosed_areas'])} enclosed areas")
             return analysis
 
         except Exception as e:
             print(f"Error analyzing spatial relationships: {e}")
+            import traceback
+            traceback.print_exc()
             return analysis
 
     def _group_connected_walls(self, wall_segments: List[Dict]) -> List[Dict]:
@@ -436,19 +567,42 @@ class AutoCADIntegration:
         if not wall_segments:
             return []
 
-        # Use spatial indexing for large datasets
-        if len(wall_segments) > 2000:
+        # Use spatial indexing for datasets larger than 1000 segments
+        if len(wall_segments) > 1000:
             print(f"Large dataset detected ({len(wall_segments)} segments). Using spatial indexing optimization.")
             return self._group_connected_walls_spatial(wall_segments)
+
+        # For very large datasets, use simplified grouping
+        if len(wall_segments) > 5000:
+            print(f"Very large dataset detected ({len(wall_segments)} segments). Using simplified grouping.")
+            return self._group_connected_walls_simplified(wall_segments)
 
         groups = []
         used_segments = set()
         tolerance = 1.0
-        max_iterations = len(wall_segments) * 2  # More reasonable iteration limit
+        max_iterations = min(len(wall_segments), 1000)  # Cap iterations to prevent infinite loops
+
+        import time
+        start_time = time.time()
+        timeout_seconds = 30  # 30 second timeout
 
         for i, segment in enumerate(wall_segments):
             if i in used_segments:
                 continue
+
+            # Check timeout
+            if time.time() - start_time > timeout_seconds:
+                print(f"Wall grouping timed out after {timeout_seconds} seconds. Creating individual groups for remaining segments.")
+                # Create individual groups for remaining segments
+                for j in range(i, len(wall_segments)):
+                    if j not in used_segments:
+                        groups.append({
+                            'segments': [wall_segments[j]],
+                            'total_length': wall_segments[j]['length'],
+                            'layers': {wall_segments[j]['layer']},
+                            'bounds': self._get_segment_bounds(wall_segments[j])
+                        })
+                break
 
             # Start a new group with this segment
             group = {
@@ -466,12 +620,17 @@ class AutoCADIntegration:
                 found_connection = False
                 iterations += 1
                 
+                # Check timeout periodically
+                if iterations % 100 == 0 and time.time() - start_time > timeout_seconds:
+                    print(f"Wall grouping timed out during group {len(groups)+1}")
+                    break
+                
                 for j, other_segment in enumerate(wall_segments):
                     if j in used_segments:
                         continue
 
                     # Check if this segment connects to any segment in the group
-                    if self._segments_connected(group['segments'], other_segment, tolerance):
+                    if self._segments_connected_simple(group['segments'], other_segment, tolerance):
                         group['segments'].append(other_segment)
                         group['total_length'] += other_segment['length']
                         group['layers'].add(other_segment['layer'])
@@ -482,7 +641,7 @@ class AutoCADIntegration:
 
             groups.append(group)
 
-        print(f"Grouped {len(wall_segments)} segments into {len(groups)} wall groups")
+        print(f"Grouped {len(wall_segments)} segments into {len(groups)} wall groups in {time.time() - start_time:.2f} seconds")
         return groups
 
     def _segments_connected(self, group_segments: List[Dict], segment: Dict, tolerance: float) -> bool:
@@ -524,6 +683,43 @@ class AutoCADIntegration:
         ]
         
         return min(distances) <= tolerance
+
+    def _group_connected_walls_simplified(self, wall_segments: List[Dict]) -> List[Dict]:
+        """Simplified grouping for very large datasets - groups by layer and proximity only"""
+        print(f"Using simplified grouping for {len(wall_segments)} segments...")
+        
+        # Group segments by layer first
+        layer_groups = defaultdict(list)
+        for segment in wall_segments:
+            layer_groups[segment['layer']].append(segment)
+        
+        groups = []
+        for layer_name, layer_segments in layer_groups.items():
+            # For each layer, create groups based on spatial proximity
+            if len(layer_segments) <= 100:
+                # Small enough to use normal grouping
+                layer_group = {
+                    'segments': layer_segments,
+                    'total_length': sum(seg['length'] for seg in layer_segments),
+                    'layers': {layer_name},
+                    'bounds': self._calculate_segment_bounds(layer_segments)
+                }
+                groups.append(layer_group)
+            else:
+                # Split large layer groups into spatial chunks
+                chunk_size = 50
+                for i in range(0, len(layer_segments), chunk_size):
+                    chunk = layer_segments[i:i+chunk_size]
+                    chunk_group = {
+                        'segments': chunk,
+                        'total_length': sum(seg['length'] for seg in chunk),
+                        'layers': {layer_name},
+                        'bounds': self._calculate_segment_bounds(chunk)
+                    }
+                    groups.append(chunk_group)
+        
+        print(f"Simplified grouping created {len(groups)} groups from {len(layer_groups)} layers")
+        return groups
 
     def _group_connected_walls_spatial(self, wall_segments: List[Dict]) -> List[Dict]:
         """Optimized wall grouping using spatial indexing for large datasets"""
@@ -714,10 +910,24 @@ class AutoCADIntegration:
 
     def analyze_dxf_geometry(self, analyzer=None) -> Dict:
         """
-        Main method to analyze DXF geometry and return wall classifications
-        This replaces the hardcoded analysis in the original code
+        Main method to analyze DXF geometry using enhanced processing
         """
-        print("Starting DXF geometric analysis...")
+        print("Starting enhanced DXF geometric analysis...")
+        
+        # Use the enhanced geometry processor for comprehensive analysis
+        try:
+            analysis_result = self.enhanced_processor.process_dxf_geometry(self, analyzer)
+            print("Enhanced geometric analysis completed successfully")
+            return analysis_result
+        except Exception as e:
+            print(f"Enhanced analysis failed: {e}. Falling back to basic analysis.")
+            return self._fallback_to_basic_analysis(analyzer)
+    
+    def _fallback_to_basic_analysis(self, analyzer=None) -> Dict:
+        """
+        Fallback to the original analysis method if enhanced processing fails
+        """
+        print("Using fallback analysis method...")
         
         # Step 1: Extract all geometric entities
         entities = self.extract_geometric_entities()

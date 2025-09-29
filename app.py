@@ -8,7 +8,7 @@ from src.autocad_integration import AutoCADIntegration
 import traceback
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
+app.secret_key = os.environ.get("SESSION_SECRET")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)  # needed for url_for to generate with https
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
@@ -17,7 +17,7 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max file size
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 os.makedirs('outputs', exist_ok=True)
 
-ALLOWED_EXTENSIONS = {'dxf', 'dwg'}
+ALLOWED_EXTENSIONS = {'dxf'}  # DWG requires conversion to DXF
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -40,7 +40,7 @@ def process_file():
             return jsonify({'success': False, 'error': 'No file selected'})
         
         if not allowed_file(file.filename):
-            return jsonify({'success': False, 'error': 'Invalid file type. Please upload DXF or DWG files.'})
+            return jsonify({'success': False, 'error': 'Invalid file type. Please upload DXF files only. DWG files require conversion to DXF format.'})
         
         # Save uploaded file
         if file.filename:
@@ -123,14 +123,30 @@ def process_dxf_file(filepath, analyzer, autocad):
         output_path = os.path.join('outputs', output_filename)
         autocad.save_dxf(output_path)
         
+        # Export measurements if available
+        export_urls = {}
+        if 'measurements' in analysis_result and analysis_result['measurements']:
+            export_results = autocad.export_measurements(analysis_result['measurements'])
+            for format_type, file_path in export_results.items():
+                export_filename = os.path.basename(file_path)
+                export_urls[format_type] = f'/download/{export_filename}'
+        
         return {
             'success': True,
             'analysis': {
                 'drawing_type': analysis_result['drawing_type'],
                 'layers_created': layers_created,
-                'elements_detected': elements_detected
+                'elements_detected': elements_detected,
+                'measurements_summary': {
+                    'total_walls': len(analysis_result.get('measurements', {}).get('walls', [])),
+                    'total_doors': len(analysis_result.get('measurements', {}).get('doors', [])),
+                    'total_windows': len(analysis_result.get('measurements', {}).get('windows', [])),
+                    'perimeter_length': analysis_result.get('measurements', {}).get('perimeter_length', 0),
+                    'total_area': analysis_result.get('measurements', {}).get('total_area', 0)
+                }
             },
-            'download_url': f'/download/{output_filename}'
+            'download_url': f'/download/{output_filename}',
+            'export_urls': export_urls
         }
         
     except Exception as e:

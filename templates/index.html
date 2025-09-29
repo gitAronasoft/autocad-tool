@@ -67,7 +67,7 @@
                                 <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
                                 <h4>Drag & Drop your DXF file here</h4>
                                 <p class="text-muted">or click to select a file</p>
-                                <input type="file" id="fileInput" name="dxf_file" accept=".dxf,.dwg" style="display: none;">
+                                <input type="file" id="fileInput" name="dxf_file" accept=".dxf" style="display: none;">
                                 <button type="button" class="btn btn-primary" id="chooseFileBtn">
                                     <i class="fas fa-folder-open"></i> Choose File
                                 </button>
@@ -118,6 +118,15 @@
                             <a id="downloadLink" class="btn btn-primary btn-lg" style="display: none;">
                                 <i class="fas fa-download"></i> Download Processed DXF
                             </a>
+                            <div id="exportLinks" style="display: none; margin-top: 15px;">
+                                <h6>Export Measurements:</h6>
+                                <a id="csvExportLink" class="btn btn-success me-2" style="display: none;">
+                                    <i class="fas fa-file-csv"></i> Export CSV
+                                </a>
+                                <a id="jsonExportLink" class="btn btn-info" style="display: none;">
+                                    <i class="fas fa-file-code"></i> Export JSON
+                                </a>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -271,6 +280,9 @@
         function showResults(result) {
             const resultsContent = document.getElementById('resultsContent');
             const downloadLink = document.getElementById('downloadLink');
+            const exportLinks = document.getElementById('exportLinks');
+            const csvExportLink = document.getElementById('csvExportLink');
+            const jsonExportLink = document.getElementById('jsonExportLink');
             
             let html = '<h5>Analysis Results:</h5>';
             html += `<p><strong>Drawing Type:</strong> ${result.analysis.drawing_type}</p>`;
@@ -287,11 +299,41 @@
                 html += `<p><strong>Elements Detected:</strong> ${result.analysis.elements_detected}</p>`;
             }
             
+            // Show measurement summary if available
+            if (result.analysis.measurements_summary) {
+                const summary = result.analysis.measurements_summary;
+                html += '<h6>Measurements Summary:</h6>';
+                html += '<div class="row">';
+                html += `<div class="col-md-3"><strong>Walls:</strong> ${summary.total_walls}</div>`;
+                html += `<div class="col-md-3"><strong>Doors:</strong> ${summary.total_doors}</div>`;
+                html += `<div class="col-md-3"><strong>Windows:</strong> ${summary.total_windows}</div>`;
+                html += `<div class="col-md-3"><strong>Area:</strong> ${summary.total_area.toFixed(2)} sq units</div>`;
+                html += '</div>';
+                if (summary.perimeter_length > 0) {
+                    html += `<p><strong>Perimeter Length:</strong> ${summary.perimeter_length.toFixed(2)} units</p>`;
+                }
+            }
+            
             resultsContent.innerHTML = html;
             
             if (result.download_url) {
                 downloadLink.href = result.download_url;
                 downloadLink.style.display = 'inline-block';
+            }
+            
+            // Handle export links
+            if (result.export_urls) {
+                exportLinks.style.display = 'block';
+                
+                if (result.export_urls.csv) {
+                    csvExportLink.href = result.export_urls.csv;
+                    csvExportLink.style.display = 'inline-block';
+                }
+                
+                if (result.export_urls.json) {
+                    jsonExportLink.href = result.export_urls.json;
+                    jsonExportLink.style.display = 'inline-block';
+                }
             }
             
             resultsSection.style.display = 'block';

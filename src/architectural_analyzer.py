@@ -8,7 +8,7 @@ from openai import OpenAI
 import ezdxf
 from typing import Dict, List, Tuple, Optional
 
-# the newest OpenAI model is "gpt-5-mini" which was released August 7, 2025.
+# the newest OpenAI model is "gpt-5" which was released August 7, 2025.
 # do not change this unless explicitly requested by the user
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 openai = None
@@ -70,7 +70,7 @@ class ArchitecturalAnalyzer:
         base64_image = self.encode_image_to_base64(image_path)
         
         response = openai.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -144,7 +144,7 @@ class ArchitecturalAnalyzer:
         """
         
         response = openai.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -215,7 +215,7 @@ class ArchitecturalAnalyzer:
         """
         
         response = openai.chat.completions.create(
-            model="gpt-5-mini",
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -279,7 +279,7 @@ class ArchitecturalAnalyzer:
             
             # Add shorter timeout to prevent hanging on large files
             response = openai.chat.completions.create(
-                model="gpt-5-mini",
+                model="gpt-5",
                 messages=[
                     {
                         "role": "system",
