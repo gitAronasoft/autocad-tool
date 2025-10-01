@@ -69,12 +69,11 @@ class AutoCADIntegration:
             layers = self.current_doc.layers
             if layer_name not in layers:
                 layer = layers.new(name=layer_name)
-                # Type-safe attribute setting
-                if hasattr(layer, 'color'):
-                    layer.color = color
-                if hasattr(layer.dxf, 'linetype'):
+                # Set layer attributes via dxf
+                if hasattr(layer, 'dxf'):
+                    layer.dxf.color = color
                     layer.dxf.linetype = linetype
-                print(f"Created layer: {layer_name}")
+                print(f"Created layer: {layer_name} (color: {color})")
             else:
                 print(f"Layer {layer_name} already exists")
             return True
@@ -313,9 +312,10 @@ class AutoCADIntegration:
                 elif action == 'draw_polyline':
                     coordinates = command.get('coordinates')
                     layer_name = command.get('layer_name', '0')
+                    closed = command.get('closed', False)
                     
                     if coordinates and len(coordinates) >= 2:
-                        success = self.draw_polyline(coordinates, layer_name)
+                        success = self.draw_polyline(coordinates, layer_name, closed)
                         if success:
                             commands_executed += 1
                 
@@ -491,6 +491,14 @@ class AutoCADIntegration:
             # Diagnostic: warn if no entities were extracted from a non-empty modelspace
             if entity_count > 0 and total_extracted == 0:
                 print(f"WARNING: Iterated over {entity_count} entities but extracted 0. Check entity types.")
+                # Check for PDF underlays which are not supported
+                pdf_count = sum(1 for e in modelspace if e.dxftype() == 'PDFUNDERLAY')
+                if pdf_count > 0:
+                    error_msg = f"This DXF contains {pdf_count} PDF reference(s), not actual CAD geometry. Please explode/convert the PDF to CAD entities in AutoCAD before uploading, or use a DXF file with actual geometric entities (lines, polylines, arcs, etc.)."
+                    print(f"ERROR: {error_msg}")
+                    # Store error in entities dict to be surfaced to UI
+                    entities['error'] = error_msg
+                    entities['pdf_underlay_detected'] = True
             
             return entities
 
@@ -986,24 +994,17 @@ class AutoCADIntegration:
                         'building_bounds': spatial_analysis.get('building_bounds')
                     }
                     
-                    # Use AI to enhance the spatial analysis with timeout handling
-                    import signal
-                    
-                    def timeout_handler(signum, frame):
-                        raise TimeoutError("AI analysis timed out")
-                    
-                    # Set alarm for 15 seconds
-                    signal.signal(signal.SIGALRM, timeout_handler)
-                    signal.alarm(15)
-                    
+                    # Use AI to enhance the spatial analysis with improved timeout handling  
                     try:
                         enhanced_analysis = analyzer.analyze_geometric_data(analysis_metadata, spatial_analysis)
                         spatial_analysis = enhanced_analysis
-                        print("AI analysis integration completed")
-                    except TimeoutError:
-                        print("AI analysis timed out. Proceeding with geometric-only analysis.")
-                    finally:
-                        signal.alarm(0)  # Cancel alarm
+                        print("✅ AI analysis integration completed successfully")
+                    except Exception as e:
+                        if "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                            print("⚠️ AI enhancement failed: Request timed out. Continuing with geometric analysis.")
+                        else:
+                            print(f"⚠️ AI enhancement failed: {e}. Continuing with geometric analysis.")
+                        # Continue with geometric-only analysis - this is expected fallback behavior
                 else:
                     print("OpenAI API key not configured. Proceeding with geometric-only analysis.")
                 

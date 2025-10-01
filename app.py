@@ -50,13 +50,26 @@ def process_file():
             return jsonify({'success': False, 'error': 'Invalid filename'})
         file.save(filepath)
         
+        # Get trace options from form data (default all to True)
+        trace_options = {
+            'trace_walls': request.form.get('trace_walls', 'true').lower() == 'true',
+            'trace_doors': request.form.get('trace_doors', 'true').lower() == 'true',
+            'trace_windows': request.form.get('trace_windows', 'true').lower() == 'true'
+        }
+        
+        # Validate that at least one trace option is selected
+        if not any(trace_options.values()):
+            return jsonify({'success': False, 'error': 'Please select at least one element type to trace (Walls, Doors, or Windows).'})
+        
+        print(f"Trace options: {trace_options}")
+        
         # Initialize AI analyzer and AutoCAD integration
         analyzer = ArchitecturalAnalyzer()
         autocad = AutoCADIntegration()
         
         # For DXF files, we need to convert to image for AI analysis
         # For now, we'll load the DXF and process it directly
-        result = process_dxf_file(filepath, analyzer, autocad)
+        result = process_dxf_file(filepath, analyzer, autocad, trace_options)
         
         return jsonify(result)
         
@@ -65,9 +78,13 @@ def process_file():
         traceback.print_exc()
         return jsonify({'success': False, 'error': f'Processing error: {str(e)}'})
 
-def process_dxf_file(filepath, analyzer, autocad):
+def process_dxf_file(filepath, analyzer, autocad, trace_options=None):
     """Process a DXF file and return analysis results"""
     try:
+        # Default trace options to all True if not provided
+        if trace_options is None:
+            trace_options = {'trace_walls': True, 'trace_doors': True, 'trace_windows': True}
+        
         # Load the DXF file for analysis
         success = autocad.load_dxf_file(filepath)
         if not success:
@@ -78,6 +95,59 @@ def process_dxf_file(filepath, analyzer, autocad):
         
         # Use the new geometric analysis method with AI enhancement instead of hardcoded coordinates
         analysis_result = autocad.analyze_dxf_geometry(analyzer)
+        
+        # Check if analysis detected PDF underlay or other fatal errors
+        if not analysis_result.get('success', True) and analysis_result.get('pdf_underlay_detected'):
+            return {
+                'success': False, 
+                'error': analysis_result.get('error', 'DXF file contains no extractable geometry')
+            }
+        
+        # Filter drawing commands based on trace options
+        if 'drawing_commands' in analysis_result:
+            original_commands = analysis_result['drawing_commands']
+            filtered_commands = []
+            
+            for cmd in original_commands:
+                layer_name = cmd.get('layer_name', '').lower()
+                action = cmd.get('action', '')
+                
+                # Always keep essential non-geometry commands
+                if action in ['set_units', 'configure', 'initialize']:
+                    filtered_commands.append(cmd)
+                    continue
+                
+                # Keep create_layer commands for layers we'll use
+                if action == 'create_layer':
+                    # Check if this layer will be used based on trace options
+                    keep_layer = False
+                    if trace_options['trace_walls'] and ('wall' in layer_name or 'exterior' in layer_name or 'interior' in layer_name):
+                        keep_layer = True
+                    if trace_options['trace_doors'] and 'door' in layer_name:
+                        keep_layer = True
+                    if trace_options['trace_windows'] and 'window' in layer_name:
+                        keep_layer = True
+                    
+                    if keep_layer:
+                        filtered_commands.append(cmd)
+                # Filter drawing commands only if they have a layer_name
+                elif layer_name:
+                    keep_cmd = False
+                    if trace_options['trace_walls'] and ('wall' in layer_name or 'exterior' in layer_name or 'interior' in layer_name):
+                        keep_cmd = True
+                    if trace_options['trace_doors'] and 'door' in layer_name:
+                        keep_cmd = True
+                    if trace_options['trace_windows'] and 'window' in layer_name:
+                        keep_cmd = True
+                    
+                    if keep_cmd:
+                        filtered_commands.append(cmd)
+                # Keep all commands without a layer_name (can't filter them)
+                else:
+                    filtered_commands.append(cmd)
+            
+            analysis_result['drawing_commands'] = filtered_commands
+            print(f"Filtered commands: {len(original_commands)} → {len(filtered_commands)} based on trace options")
         
         # Log analysis metadata for debugging
         metadata = analysis_result.get('analysis_metadata', {})

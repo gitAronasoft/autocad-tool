@@ -85,6 +85,14 @@ class EnhancedGeometryProcessor:
         if not entities:
             return self._create_enhanced_fallback()
         
+        # Check if PDF underlay was detected (no actual geometry)
+        if entities.get('pdf_underlay_detected'):
+            return {
+                'success': False,
+                'error': entities.get('error', 'DXF file contains PDF references instead of actual geometry'),
+                'pdf_underlay_detected': True
+            }
+        
         # Step 2: Detect house outline and structure
         house_structure = self._detect_house_outline(entities)
         
@@ -237,13 +245,9 @@ class EnhancedGeometryProcessor:
     
     def _group_connected_segments(self, segments: List[Dict], bounds: Dict) -> List[Dict]:
         """
-<<<<<<< HEAD
         Group segments that are connected to form continuous walls (optimized version).
         Prioritizes longer segments for better wall detection.
         Uses adaptive tolerance based on building size.
-=======
-        Group segments that are connected to form continuous walls
->>>>>>> parent of 15ecff0 (New)
         """
         # Adaptive tolerance: 1% of smaller dimension, minimum 8 units
         building_size = min(bounds['width'], bounds['height'])
@@ -251,7 +255,6 @@ class EnhancedGeometryProcessor:
         groups = []
         used_segments = set()
         
-<<<<<<< HEAD
         # Sort segments by length (longest first) to prioritize main walls
         sorted_segments = sorted(segments, key=lambda s: s.get('length', 0), reverse=True)
         
@@ -262,9 +265,6 @@ class EnhancedGeometryProcessor:
         print(f"Processing {len(segments_to_process)} segments for grouping (prioritized by length from {len(segments)} total, connection tolerance: {connection_tolerance:.1f} units)")
         
         for i, segment in enumerate(segments_to_process):
-=======
-        for i, segment in enumerate(segments):
->>>>>>> parent of 15ecff0 (New)
             if i in used_segments:
                 continue
             
@@ -277,11 +277,16 @@ class EnhancedGeometryProcessor:
             }
             used_segments.add(i)
             
-            # Find connected segments
+            # Find connected segments with iteration limit to prevent infinite loops
+            max_iterations = 50  # Prevent infinite loops
+            iteration_count = 0
             changed = True
-            while changed:
+            
+            while changed and iteration_count < max_iterations:
                 changed = False
-                for j, other_segment in enumerate(segments):
+                iteration_count += 1
+                
+                for j, other_segment in enumerate(segments_to_process):
                     if j in used_segments:
                         continue
                     
@@ -293,10 +298,11 @@ class EnhancedGeometryProcessor:
                         group['bounds'] = self._calculate_segment_bounds(group['segments'])
                         used_segments.add(j)
                         changed = True
+                        break  # Process one connection per iteration to avoid excessive computation
             
             groups.append(group)
         
-        print(f"Grouped {len(segments)} segments into {len(groups)} wall groups")
+        print(f"Grouped {len(segments_to_process)} segments into {len(groups)} wall groups")
         return groups
     
     def _segments_connected(self, group_segments: List[Dict], new_segment: Dict, tolerance: float) -> bool:
@@ -959,7 +965,62 @@ class EnhancedGeometryProcessor:
                         'layer_name': layer_name
                     })
         
-        print(f"Generated {len(commands)} drawing commands")
+        # CRITICAL FALLBACK: If no commands were generated, create basic boundary from house structure
+        if len(commands) == 0 and house_structure.get('outline_detected'):
+            print("WARNING: No drawing commands generated from classifications. Using fallback to draw basic boundaries...")
+            
+            # Create at least the exterior boundary layer
+            fallback_layer = 'main floor exterior line'
+            fallback_color = 2  # Yellow
+            
+            commands.append({
+                'action': 'create_layer',
+                'layer_name': fallback_layer,
+                'color': fallback_color,
+                'linetype': 'CONTINUOUS'
+            })
+            
+            # Draw all perimeter segments as polylines
+            perimeter_segments = house_structure.get('perimeter_segments', [])
+            if perimeter_segments:
+                polylines = self._segments_to_polylines(perimeter_segments)
+                for polyline_points in polylines:
+                    if len(polyline_points) >= 2:
+                        commands.append({
+                            'action': 'draw_polyline',
+                            'coordinates': polyline_points,
+                            'layer_name': fallback_layer,
+                            'closed': False
+                        })
+                print(f"  Fallback: Created {len(polylines)} exterior boundary polylines")
+            
+            # Also draw interior segments if available
+            all_segments = house_structure.get('segments', [])
+            interior_segments = [s for s in all_segments if s not in perimeter_segments]
+            
+            if interior_segments:
+                interior_layer = 'main floor interior line'
+                interior_color = 6  # Magenta
+                
+                commands.append({
+                    'action': 'create_layer',
+                    'layer_name': interior_layer,
+                    'color': interior_color,
+                    'linetype': 'CONTINUOUS'
+                })
+                
+                interior_polylines = self._segments_to_polylines(interior_segments[:500])  # Limit for performance
+                for polyline_points in interior_polylines:
+                    if len(polyline_points) >= 2:
+                        commands.append({
+                            'action': 'draw_polyline',
+                            'coordinates': polyline_points,
+                            'layer_name': interior_layer,
+                            'closed': False
+                        })
+                print(f"  Fallback: Created {len(interior_polylines)} interior boundary polylines")
+        
+        print(f"Generated {len(commands)} drawing commands (total)")
         return commands
     
     def _format_results(self, house_structure: Dict, wall_classification: Dict, 

@@ -79,6 +79,49 @@
                                 </div>
                             </div>
 
+                            <div id="traceOptions" class="mt-4" style="display: none;">
+                                <div class="card bg-light">
+                                    <div class="card-body">
+                                        <h6 class="mb-3"><i class="fas fa-sliders-h"></i> Trace Options</h6>
+                                        <p class="text-muted small">Select which elements to detect and highlight:</p>
+                                        <div class="row">
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="traceWalls" name="trace_walls" checked>
+                                                    <label class="form-check-label" for="traceWalls">
+                                                        <i class="fas fa-border-all text-primary"></i> Walls
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="traceDoors" name="trace_doors" checked>
+                                                    <label class="form-check-label" for="traceDoors">
+                                                        <i class="fas fa-door-open text-success"></i> Doors
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="traceWindows" name="trace_windows" checked>
+                                                    <label class="form-check-label" for="traceWindows">
+                                                        <i class="fas fa-window-maximize text-info"></i> Windows
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            <div class="col-md-3">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="traceAll" name="trace_all">
+                                                    <label class="form-check-label" for="traceAll">
+                                                        <i class="fas fa-check-double text-warning"></i> All Elements
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="text-center mt-4">
                                 <button type="submit" class="btn btn-success btn-lg" id="processBtn" disabled>
                                     <i class="fas fa-cogs"></i> Start AI Analysis
@@ -178,6 +221,11 @@
         const uploadForm = document.getElementById('uploadForm');
         const processingStatus = document.getElementById('processingStatus');
         const resultsSection = document.getElementById('resultsSection');
+        const traceOptions = document.getElementById('traceOptions');
+        const traceAll = document.getElementById('traceAll');
+        const traceWalls = document.getElementById('traceWalls');
+        const traceDoors = document.getElementById('traceDoors');
+        const traceWindows = document.getElementById('traceWindows');
 
         // Choose File button functionality
         const chooseFileBtn = document.getElementById('chooseFileBtn');
@@ -222,30 +270,61 @@
         function handleFileSelect() {
             const file = fileInput.files[0];
             if (file) {
-                // Check file type
-                const allowedTypes = ['dxf', 'dwg'];
+                // Check file type - only DXF is supported
+                const allowedTypes = ['dxf'];
                 const fileExtension = file.name.split('.').pop().toLowerCase();
                 
                 if (!allowedTypes.includes(fileExtension)) {
-                    alert('Please select a DXF or DWG file.');
+                    alert('Please select a DXF file. DWG files require conversion to DXF format.');
                     fileInput.value = '';
                     return;
                 }
                 
                 fileName.textContent = file.name;
                 fileInfo.style.display = 'block';
+                traceOptions.style.display = 'block';
                 processBtn.disabled = false;
             } else {
                 fileInfo.style.display = 'none';
+                traceOptions.style.display = 'none';
                 processBtn.disabled = true;
             }
         }
 
+        // Handle "All Elements" checkbox
+        traceAll.addEventListener('change', function() {
+            if (this.checked) {
+                traceWalls.checked = true;
+                traceDoors.checked = true;
+                traceWindows.checked = true;
+            }
+        });
+
+        // Uncheck "All Elements" when individual items are unchecked
+        [traceWalls, traceDoors, traceWindows].forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                if (!this.checked) {
+                    traceAll.checked = false;
+                } else if (traceWalls.checked && traceDoors.checked && traceWindows.checked) {
+                    traceAll.checked = true;
+                }
+            });
+        });
+
         uploadForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             
+            // Validate that at least one trace option is selected
+            if (!traceWalls.checked && !traceDoors.checked && !traceWindows.checked) {
+                alert('Please select at least one element type to trace (Walls, Doors, or Windows).');
+                return;
+            }
+            
             const formData = new FormData();
             formData.append('dxf_file', fileInput.files[0]);
+            formData.append('trace_walls', traceWalls.checked);
+            formData.append('trace_doors', traceDoors.checked);
+            formData.append('trace_windows', traceWindows.checked);
             
             // Show processing status
             processingStatus.style.display = 'block';
