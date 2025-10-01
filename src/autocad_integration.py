@@ -986,17 +986,24 @@ class AutoCADIntegration:
                         'building_bounds': spatial_analysis.get('building_bounds')
                     }
                     
-                    # Use AI to enhance the spatial analysis with improved timeout handling  
+                    # Use AI to enhance the spatial analysis with timeout handling
+                    import signal
+                    
+                    def timeout_handler(signum, frame):
+                        raise TimeoutError("AI analysis timed out")
+                    
+                    # Set alarm for 15 seconds
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(15)
+                    
                     try:
                         enhanced_analysis = analyzer.analyze_geometric_data(analysis_metadata, spatial_analysis)
                         spatial_analysis = enhanced_analysis
-                        print("✅ AI analysis integration completed successfully")
-                    except Exception as e:
-                        if "timeout" in str(e).lower() or "timed out" in str(e).lower():
-                            print("⚠️ AI enhancement failed: Request timed out. Continuing with geometric analysis.")
-                        else:
-                            print(f"⚠️ AI enhancement failed: {e}. Continuing with geometric analysis.")
-                        # Continue with geometric-only analysis - this is expected fallback behavior
+                        print("AI analysis integration completed")
+                    except TimeoutError:
+                        print("AI analysis timed out. Proceeding with geometric-only analysis.")
+                    finally:
+                        signal.alarm(0)  # Cancel alarm
                 else:
                     print("OpenAI API key not configured. Proceeding with geometric-only analysis.")
                 

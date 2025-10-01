@@ -8,7 +8,7 @@ from openai import OpenAI
 import ezdxf
 from typing import Dict, List, Tuple, Optional
 
-# the newest OpenAI model is "gpt-4o" which was released August 7, 2025.
+# the newest OpenAI model is "gpt-5" which was released August 7, 2025.
 # do not change this unless explicitly requested by the user
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 openai = None
@@ -25,7 +25,7 @@ class ArchitecturalAnalyzer:
     3. Generate proper layer names for AutoCAD
     4. Trace walls and create AutoCAD-compatible output
     """
-
+    
     def __init__(self):
         self.layer_names = {
             'basement': {
@@ -54,23 +54,23 @@ class ArchitecturalAnalyzer:
                 'door': 'door_window_main'
             }
         }
-
+    
     def encode_image_to_base64(self, image_path: str) -> str:
         """Convert image file to base64 string for OpenAI API"""
         with open(image_path, "rb") as image_file:
             return base64.b64encode(image_file.read()).decode('utf-8')
-
+    
     def analyze_drawing_type(self, image_path: str) -> Dict:
         """
         Determine if the drawing is a floor plan or elevation using AI
         """
         if not openai:
             raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
-
+        
         base64_image = self.encode_image_to_base64(image_path)
-
+        
         response = openai.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -93,40 +93,37 @@ class ArchitecturalAnalyzer:
             response_format={"type": "json_object"},
             timeout=20.0
         )
-
+        
         content = response.choices[0].message.content
         if content is None:
             raise ValueError("Empty response content from OpenAI API for drawing type analysis")
-        try:
-            result = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to decode JSON response from OpenAI API: {e}. Response content: {content}")
+        result = json.loads(content)
         return result
-
+    
     def analyze_floor_plan(self, image_path: str) -> Dict:
         """
         Analyze floor plan to detect walls, rooms, and spaces
         """
         if not openai:
             raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
-
+        
         base64_image = self.encode_image_to_base64(image_path)
-
+        
         prompt = """
         You are an expert architectural analyst. Analyze this floor plan and identify:
-
+        
         1. Floor type (basement, main_floor, second_floor, etc.)
         2. Interior walls (walls inside the house)
         3. Exterior walls (walls forming the house perimeter)
         4. Garage spaces (unheated but enclosed areas)
         5. Buffered/protected walls (walls adjacent to garage or other unheated spaces)
         6. Room types and their boundaries
-
+        
         For each wall or space, provide coordinates where lines should be drawn to trace:
         - Interior walls
         - Exterior walls  
         - Garage-adjacent walls (different from full exterior)
-
+        
         Respond in JSON format with:
         {
             "floor_type": "basement/main_floor/second_floor",
@@ -145,9 +142,9 @@ class ArchitecturalAnalyzer:
             ]
         }
         """
-
+        
         response = openai.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -170,40 +167,37 @@ class ArchitecturalAnalyzer:
             response_format={"type": "json_object"},
             timeout=20.0
         )
-
+        
         content = response.choices[0].message.content
         if content is None:
             raise ValueError("Empty response content from OpenAI API for floor plan analysis")
-        try:
-            result = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to decode JSON response from OpenAI API: {e}. Response content: {content}")
+        result = json.loads(content)
         return result
-
+    
     def analyze_elevation(self, image_path: str) -> Dict:
         """
         Analyze elevation to detect doors, windows, and their dimensions
         """
         if not openai:
             raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
-
+        
         base64_image = self.encode_image_to_base64(image_path)
-
+        
         prompt = """
         You are an expert architectural analyst. Analyze this elevation drawing and identify:
-
+        
         1. Elevation direction (front, back, left, right)
         2. Doors (front door, patio door, etc.) with dimensions if visible
         3. Windows with their locations and sizes
         4. Door windows (windows within doors)
-
+        
         For each element, provide:
         - Type (door/window)
         - Subtype (front_door, patio_door, regular_window, door_window)
         - Coordinates for drawing the element outline
         - Dimensions if visible (e.g., "36x80" for doors)
         - Floor level (main, basement, second, etc.)
-
+        
         Respond in JSON format with:
         {
             "elevation_direction": "front/back/left/right",
@@ -219,9 +213,9 @@ class ArchitecturalAnalyzer:
             ]
         }
         """
-
+        
         response = openai.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5",
             messages=[
                 {
                     "role": "system",
@@ -244,16 +238,13 @@ class ArchitecturalAnalyzer:
             response_format={"type": "json_object"},
             timeout=20.0
         )
-
+        
         content = response.choices[0].message.content
         if content is None:
             raise ValueError("Empty response content from OpenAI API for elevation analysis")
-        try:
-            result = json.loads(content)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to decode JSON response from OpenAI API: {e}. Response content: {content}")
+        result = json.loads(content)
         return result
-
+    
     def process_drawing(self, image_path: str) -> Dict:
         """
         Main processing function that analyzes any architectural drawing
@@ -261,7 +252,7 @@ class ArchitecturalAnalyzer:
         """
         # First determine drawing type
         drawing_type_analysis = self.analyze_drawing_type(image_path)
-
+        
         analysis_type = drawing_type_analysis.get('type')
         if analysis_type == 'floor_plan':
             analysis = self.analyze_floor_plan(image_path)
@@ -269,11 +260,11 @@ class ArchitecturalAnalyzer:
         else:
             analysis = self.analyze_elevation(image_path)
             analysis['drawing_type'] = 'elevation'
-
+        
         analysis['type_analysis'] = drawing_type_analysis
-
+        
         return analysis
-
+    
     def analyze_geometric_data(self, geometric_data: Dict, spatial_analysis: Dict) -> Dict:
         """
         Analyze geometric data using AI to enhance wall classification and spatial understanding
@@ -285,59 +276,50 @@ class ArchitecturalAnalyzer:
             print("Starting OpenAI API call for geometric analysis...")
             # Prepare geometric data summary for AI analysis
             analysis_prompt = self._create_geometric_analysis_prompt(geometric_data, spatial_analysis)
-
-            # Use shorter, more focused prompts for faster response
+            
+            # Add shorter timeout to prevent hanging on large files
             response = openai.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5",
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are an expert architectural analyst. Analyze DXF geometric data and classify walls as interior/exterior. Respond in JSON format with your analysis. Be concise and fast."
+                        "content": """You are an expert architectural analyst specializing in CAD drawing interpretation. 
+                        Analyze the geometric data from a DXF file to classify walls, spaces, and architectural elements.
+                        Focus on spatial relationships, connectivity patterns, and architectural logic."""
                     },
                     {
                         "role": "user",
-                        "content": analysis_prompt[:2000]  # Limit prompt size for faster processing
+                        "content": analysis_prompt
                     }
                 ],
                 response_format={"type": "json_object"},
-                timeout=8.0,  # Reduced to 8 seconds for faster fallback
-                max_completion_tokens=500  # Limit response size for speed
+                timeout=10.0  # Reduced to 10 second timeout
             )
-
+            
             content = response.choices[0].message.content
             if content is None:
-                raise ValueError("Empty response content from OpenAI API")
+                raise ValueError("Empty response content from OpenAI API for geometric analysis")
+            ai_analysis = json.loads(content)
             
-            try:
-                ai_analysis = json.loads(content)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Failed to decode JSON response from OpenAI API: {e}. Response content: {content}")
-
             # Enhance the spatial analysis with AI insights
             enhanced_analysis = self._merge_ai_with_geometric_analysis(ai_analysis, spatial_analysis)
-
-            print("✅ AI-enhanced geometric analysis completed successfully")
+            
+            print("AI-enhanced geometric analysis completed")
             return enhanced_analysis
 
         except Exception as e:
-            # More specific error handling for different timeout scenarios and JSON parsing
-            if "timeout" in str(e).lower() or "timed out" in str(e).lower():
-                error_msg = "Request timed out"
-            elif isinstance(e, ValueError) and "Failed to decode JSON response" in str(e):
-                error_msg = f"API response not valid JSON: {str(e)}"
-            else:
-                error_msg = f"API error: {str(e)}"
-            print(f"⚠️ AI analysis failed: {error_msg}")
+            error_msg = f"AI analysis failed: {str(e)}"
+            print(f"Error in AI geometric analysis: {e}")
             raise Exception(error_msg)
 
     def _create_geometric_analysis_prompt(self, geometric_data: Dict, spatial_analysis: Dict) -> str:
         """Create a prompt for AI analysis of geometric data"""
-
+        
         # Summarize the geometric data
         entities_summary = geometric_data.get('entities_extracted', {})
         wall_groups = spatial_analysis.get('wall_groups_found', 0)
         building_bounds = spatial_analysis.get('building_bounds', {})
-
+        
         prompt = f"""
         Analyze this architectural DXF file geometric data:
 
@@ -354,7 +336,7 @@ class ArchitecturalAnalyzer:
 
         WALL GROUP DETAILS:
         """
-
+        
         # Add details about each wall group from spatial analysis
         if 'wall_groups' in spatial_analysis:
             for i, group in enumerate(spatial_analysis['wall_groups'][:5]):  # Limit to first 5 for prompt size
@@ -405,18 +387,18 @@ class ArchitecturalAnalyzer:
             ]
         }
         """
-
+        
         return prompt
 
     def _merge_ai_with_geometric_analysis(self, ai_analysis: Dict, spatial_analysis: Dict) -> Dict:
         """Merge AI insights with geometric analysis results"""
-
+        
         enhanced_analysis = spatial_analysis.copy()
         enhanced_analysis['ai_insights'] = ai_analysis
-
+        
         # Apply AI classifications to wall groups
         wall_classifications = ai_analysis.get('wall_classifications', [])
-
+        
         if 'wall_groups' in enhanced_analysis:
             for classification in wall_classifications:
                 group_index = classification.get('group_index', 0)
@@ -432,12 +414,12 @@ class ArchitecturalAnalyzer:
         # Add spatial insights
         enhanced_analysis['spatial_insights'] = ai_analysis.get('spatial_insights', {})
         enhanced_analysis['ai_recommendations'] = ai_analysis.get('recommendations', [])
-
+        
         return enhanced_analysis
 
     def _create_basic_analysis(self, geometric_data: Dict, spatial_analysis: Dict) -> Dict:
         """Create basic analysis when AI is not available"""
-
+        
         basic_analysis = spatial_analysis.copy()
         basic_analysis['ai_insights'] = {
             "note": "AI analysis not available - using geometric analysis only",
@@ -447,24 +429,24 @@ class ArchitecturalAnalyzer:
                 "analysis_method": "geometric_only"
             }
         }
-
+        
         return basic_analysis
-
+    
     def generate_autocad_commands(self, analysis: Dict) -> List[str]:
         """
         Generate AutoCAD command sequence based on analysis results
         """
         commands = []
-
+        
         if analysis['drawing_type'] == 'floor_plan':
             # Generate commands for wall tracing
             for space in analysis.get('spaces', []):
                 layer_name = space['layer_name']
                 coords = space['coordinates']
-
+                
                 # Create layer
                 commands.append(f"-LAYER M {layer_name}")
-
+                
                 # Draw polyline for wall tracing
                 if len(coords) > 1:
                     polyline_cmd = "PLINE "
@@ -472,21 +454,21 @@ class ArchitecturalAnalyzer:
                         polyline_cmd += f"{coord[0]},{coord[1]} "
                     polyline_cmd += "C"  # Close polyline
                     commands.append(polyline_cmd)
-
+        
         elif analysis['drawing_type'] == 'elevation':
             # Generate commands for doors and windows
             for element in analysis.get('elements', []):
                 layer_name = element['layer_name']
                 coords = element['coordinates']
-
+                
                 # Create layer
                 commands.append(f"-LAYER M {layer_name}")
-
+                
                 # Draw rectangle for door/window
                 if len(coords) >= 4:
                     rect_cmd = f"RECTANG {coords[0][0]},{coords[0][1]} {coords[2][0]},{coords[2][1]}"
                     commands.append(rect_cmd)
-
+        
         return commands
 
 def main():
@@ -494,7 +476,7 @@ def main():
     Example usage of the ArchitecturalAnalyzer
     """
     analyzer = ArchitecturalAnalyzer()
-
+    
     # Example usage - you would replace this with actual file paths
     print("Architectural Drawing Analyzer initialized")
     print("Ready to process AutoCAD drawings and PDFs")

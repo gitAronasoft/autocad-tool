@@ -237,9 +237,13 @@ class EnhancedGeometryProcessor:
     
     def _group_connected_segments(self, segments: List[Dict], bounds: Dict) -> List[Dict]:
         """
+<<<<<<< HEAD
         Group segments that are connected to form continuous walls (optimized version).
         Prioritizes longer segments for better wall detection.
         Uses adaptive tolerance based on building size.
+=======
+        Group segments that are connected to form continuous walls
+>>>>>>> parent of 15ecff0 (New)
         """
         # Adaptive tolerance: 1% of smaller dimension, minimum 8 units
         building_size = min(bounds['width'], bounds['height'])
@@ -247,6 +251,7 @@ class EnhancedGeometryProcessor:
         groups = []
         used_segments = set()
         
+<<<<<<< HEAD
         # Sort segments by length (longest first) to prioritize main walls
         sorted_segments = sorted(segments, key=lambda s: s.get('length', 0), reverse=True)
         
@@ -257,6 +262,9 @@ class EnhancedGeometryProcessor:
         print(f"Processing {len(segments_to_process)} segments for grouping (prioritized by length from {len(segments)} total, connection tolerance: {connection_tolerance:.1f} units)")
         
         for i, segment in enumerate(segments_to_process):
+=======
+        for i, segment in enumerate(segments):
+>>>>>>> parent of 15ecff0 (New)
             if i in used_segments:
                 continue
             
@@ -269,16 +277,11 @@ class EnhancedGeometryProcessor:
             }
             used_segments.add(i)
             
-            # Find connected segments with iteration limit to prevent infinite loops
-            max_iterations = 50  # Prevent infinite loops
-            iteration_count = 0
+            # Find connected segments
             changed = True
-            
-            while changed and iteration_count < max_iterations:
+            while changed:
                 changed = False
-                iteration_count += 1
-                
-                for j, other_segment in enumerate(segments_to_process):
+                for j, other_segment in enumerate(segments):
                     if j in used_segments:
                         continue
                     
@@ -290,11 +293,10 @@ class EnhancedGeometryProcessor:
                         group['bounds'] = self._calculate_segment_bounds(group['segments'])
                         used_segments.add(j)
                         changed = True
-                        break  # Process one connection per iteration to avoid excessive computation
             
             groups.append(group)
         
-        print(f"Grouped {len(segments_to_process)} segments into {len(groups)} wall groups")
+        print(f"Grouped {len(segments)} segments into {len(groups)} wall groups")
         return groups
     
     def _segments_connected(self, group_segments: List[Dict], new_segment: Dict, tolerance: float) -> bool:
