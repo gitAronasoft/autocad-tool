@@ -360,7 +360,14 @@ class AutoCADIntegration:
         if self.current_doc is None or self.modelspace is None:
             print("No DXF document loaded")
             return {}
-
+        
+        # Use stateless extraction to avoid state corruption issues
+        return self._extract_entities_from_modelspace(self.modelspace)
+    
+    def _extract_entities_from_modelspace(self, modelspace) -> Dict[str, List]:
+        """
+        Stateless extraction method that doesn't rely on instance state
+        """
         entities = {
             'lines': [],
             'polylines': [],
@@ -373,7 +380,9 @@ class AutoCADIntegration:
         }
 
         try:
-            for entity in self.modelspace:
+            entity_count = 0
+            for entity in modelspace:
+                entity_count += 1
                 entity_type = entity.dxftype()
                 
                 if entity_type == 'LINE':
@@ -462,14 +471,23 @@ class AutoCADIntegration:
                         'area': math.pi * entity.dxf.radius**2
                     })
 
+            total_extracted = (len(entities['lines']) + len(entities['lwpolylines']) + 
+                             len(entities['polylines']) + len(entities['arcs']) + len(entities['circles']))
+            
             print(f"Extracted {len(entities['lines'])} lines, {len(entities['lwpolylines'])} lwpolylines, "
                   f"{len(entities['polylines'])} polylines, {len(entities['arcs'])} arcs, "
-                  f"{len(entities['circles'])} circles")
+                  f"{len(entities['circles'])} circles (total: {total_extracted} from {entity_count} entities)")
+            
+            # Diagnostic: warn if no entities were extracted from a non-empty modelspace
+            if entity_count > 0 and total_extracted == 0:
+                print(f"WARNING: Iterated over {entity_count} entities but extracted 0. Check entity types.")
             
             return entities
 
         except Exception as e:
             print(f"Error extracting geometric entities: {e}")
+            import traceback
+            traceback.print_exc()
             return {}
 
 

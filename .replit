@@ -12,7 +12,7 @@ language = "python3"
 requiredFiles = [".replit", "replit.nix"]
 
 [deployment]
-run = ["gunicorn", "--bind", "0.0.0.0:5000", "--reuse-port", "main:app"]
+run = ["gunicorn", "--bind", "0.0.0.0:5000", "main:app"]
 deploymentTarget = "autoscale"
 
 [agent]
@@ -46,6 +46,10 @@ waitForPort = 5000
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 38333
+externalPort = 3001
 
 [[ports]]
 localPort = 44085

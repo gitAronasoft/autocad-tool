@@ -52,24 +52,26 @@ class EnhancedGeometryProcessor:
             }
         }
         
-        # Color scheme for different element types
+        # Color scheme matching user's manual highlighting:
+        # - Outer boundaries (exterior/perimeter): Yellow/Lime for clear visibility
+        # - Inner boundaries (interior walls): Magenta/Pink for contrast
         self.layer_colors = {
-            'basement interior line': 2,  # Yellow
-            'basement exterior line': 1,  # Red
-            'main floor interior line': 3,  # Green
-            'main floor exterior line': 1,  # Red
+            'basement interior line': 6,  # Magenta (inner boundaries)
+            'basement exterior line': 2,  # Yellow (outer boundary)
+            'main floor interior line': 6,  # Magenta (inner boundaries)
+            'main floor exterior line': 2,  # Yellow (outer boundary)
             'main floor garage line': 4,  # Cyan
-            'second floor interior line': 5,  # Blue
-            'second floor exterior line': 1,  # Red
-            'front door main': 6,  # Magenta
-            'back door main': 6,  # Magenta
-            'patio door main': 6,  # Magenta
-            'garage door main': 6,  # Magenta
-            'interior door main': 6,  # Magenta
-            'front window main': 7,  # White
-            'back window main': 7,  # White
-            'side window main': 7,  # White
-            'door window main': 7,  # White
+            'second floor interior line': 6,  # Magenta (inner boundaries)
+            'second floor exterior line': 2,  # Yellow (outer boundary)
+            'front door main': 3,  # Green
+            'back door main': 3,  # Green
+            'patio door main': 3,  # Green
+            'garage door main': 3,  # Green
+            'interior door main': 3,  # Green
+            'front window main': 5,  # Blue
+            'back window main': 5,  # Blue
+            'side window main': 5,  # Blue
+            'door window main': 5,  # Blue
         }
     
     def process_dxf_geometry(self, autocad_integration: 'AutoCADIntegration', ai_analyzer=None) -> Dict:
@@ -147,7 +149,7 @@ class EnhancedGeometryProcessor:
                         'parent_closed': polyline.get('closed', False)
                     })
         
-        # Find building bounds
+        # Find building bounds using percentile-based trimming to exclude outliers (dimensions/annotations)
         all_points = []
         for segment in all_segments:
             all_points.extend([segment['start'], segment['end']])
@@ -155,14 +157,22 @@ class EnhancedGeometryProcessor:
         if not all_points:
             return {'outline_detected': False, 'segments': [], 'bounds': None}
         
+        # Use 2% trimming on each side to exclude dimension/annotation outliers
+        x_coords = sorted([p[0] for p in all_points])
+        y_coords = sorted([p[1] for p in all_points])
+        trim_percent = 0.02  # Trim 2% from each end
+        trim_count = max(1, int(len(x_coords) * trim_percent))
+        
         bounds = {
-            'min_x': min(p[0] for p in all_points),
-            'max_x': max(p[0] for p in all_points),
-            'min_y': min(p[1] for p in all_points),
-            'max_y': max(p[1] for p in all_points)
+            'min_x': x_coords[trim_count],
+            'max_x': x_coords[-trim_count-1],
+            'min_y': y_coords[trim_count],
+            'max_y': y_coords[-trim_count-1]
         }
         bounds['width'] = bounds['max_x'] - bounds['min_x']
         bounds['height'] = bounds['max_y'] - bounds['min_y']
+        
+        print(f"Building bounds (2% trimmed): {bounds['width']:.1f} x {bounds['height']:.1f} units")
         
         # Detect main outline (exterior perimeter)
         perimeter_segments = self._find_perimeter_segments(all_segments, bounds)
@@ -181,9 +191,13 @@ class EnhancedGeometryProcessor:
     
     def _find_perimeter_segments(self, segments: List[Dict], bounds: Dict) -> List[Dict]:
         """
-        Identify segments that form the building perimeter (exterior walls)
+        Identify segments that form the building perimeter (exterior walls).
+        Uses adaptive tolerance based on building size.
         """
-        perimeter_tolerance = 5.0  # Units
+        # Use 1% of the smaller dimension as tolerance (adaptive to drawing scale)
+        building_size = min(bounds['width'], bounds['height'])
+        perimeter_tolerance = max(building_size * 0.01, 5.0)  # At least 5 units
+        
         perimeter_segments = []
         
         for segment in segments:
@@ -209,22 +223,26 @@ class EnhancedGeometryProcessor:
             if on_perimeter:
                 perimeter_segments.append(segment)
         
-        print(f"Found {len(perimeter_segments)} perimeter segments out of {len(segments)} total")
+        print(f"Found {len(perimeter_segments)} perimeter segments out of {len(segments)} total (tolerance: {perimeter_tolerance:.1f} units)")
         return perimeter_segments
     
     def _group_connected_segments(self, segments: List[Dict]) -> List[Dict]:
         """
-        Group segments that are connected to form continuous walls (optimized version)
+        Group segments that are connected to form continuous walls (optimized version).
+        Prioritizes longer segments for better wall detection.
         """
         connection_tolerance = 2.0  # Units
         groups = []
         used_segments = set()
         
-        # Limit processing for performance - only process reasonable number of segments
-        max_segments_to_process = min(len(segments), 1000)  # Limit to prevent hanging
-        segments_to_process = segments[:max_segments_to_process]
+        # Sort segments by length (longest first) to prioritize main walls
+        sorted_segments = sorted(segments, key=lambda s: s.get('length', 0), reverse=True)
         
-        print(f"Processing {len(segments_to_process)} segments for grouping (limited from {len(segments)} total)")
+        # Limit processing for performance - balanced between coverage and speed
+        max_segments_to_process = min(len(sorted_segments), 1500)  # Balanced limit
+        segments_to_process = sorted_segments[:max_segments_to_process]
+        
+        print(f"Processing {len(segments_to_process)} segments for grouping (prioritized by length from {len(segments)} total)")
         
         for i, segment in enumerate(segments_to_process):
             if i in used_segments:
@@ -325,12 +343,18 @@ class EnhancedGeometryProcessor:
         
         for group in wall_groups:
             # Determine if this wall group is primarily exterior or interior
+            # Use more forgiving criteria for architectural drawings
             perimeter_segment_count = sum(
                 1 for seg in group['segments'] 
                 if id(seg) in perimeter_segments
             )
             
-            is_exterior = perimeter_segment_count > len(group['segments']) * 0.5
+            # Exterior if: has ≥3 perimeter segments OR >30% are perimeter OR very long and touches perimeter
+            is_exterior = (
+                perimeter_segment_count >= 3 or  # At least 3 perimeter touches
+                (perimeter_segment_count > len(group['segments']) * 0.3) or  # >30% are perimeter
+                (perimeter_segment_count >= 1 and group['total_length'] > 200)  # Long wall touching perimeter
+            )
             
             # Determine floor type based on geometry analysis
             floor_type = self._determine_floor_type(group, bounds, entities)
@@ -782,18 +806,89 @@ class EnhancedGeometryProcessor:
         
         return house_structure, wall_classification, elements
     
+    def _segments_to_polylines(self, segments: List[Dict]) -> List[List[Tuple[float, float]]]:
+        """
+        Convert a list of line segments into continuous polylines for boundary tracing.
+        This groups connected segments into continuous paths.
+        """
+        if not segments:
+            return []
+        
+        polylines = []
+        used_segments = set()
+        tolerance = 2.0  # Connection tolerance in units
+        
+        for i, segment in enumerate(segments):
+            if i in used_segments:
+                continue
+            
+            # Start a new polyline with this segment
+            polyline = [segment['start'], segment['end']]
+            used_segments.add(i)
+            
+            # Try to extend the polyline by finding connected segments
+            extended = True
+            while extended:
+                extended = False
+                last_point = polyline[-1]
+                first_point = polyline[0]
+                
+                # Look for segments that connect to either end of the current polyline
+                for j, other_segment in enumerate(segments):
+                    if j in used_segments:
+                        continue
+                    
+                    other_start = other_segment['start']
+                    other_end = other_segment['end']
+                    
+                    # Check if this segment connects to the end of our polyline
+                    if self._points_are_close(last_point, other_start, tolerance):
+                        polyline.append(other_end)
+                        used_segments.add(j)
+                        extended = True
+                        break
+                    elif self._points_are_close(last_point, other_end, tolerance):
+                        polyline.append(other_start)
+                        used_segments.add(j)
+                        extended = True
+                        break
+                    # Check if this segment connects to the beginning of our polyline
+                    elif self._points_are_close(first_point, other_end, tolerance):
+                        polyline.insert(0, other_start)
+                        used_segments.add(j)
+                        extended = True
+                        break
+                    elif self._points_are_close(first_point, other_start, tolerance):
+                        polyline.insert(0, other_end)
+                        used_segments.add(j)
+                        extended = True
+                        break
+            
+            polylines.append(polyline)
+        
+        return polylines
+    
+    def _points_are_close(self, point1: Tuple[float, float], point2: Tuple[float, float], tolerance: float) -> bool:
+        """Check if two points are within tolerance distance"""
+        dx = point1[0] - point2[0]
+        dy = point1[1] - point2[1]
+        distance = math.sqrt(dx*dx + dy*dy)
+        return distance <= tolerance
+    
     def _generate_drawing_commands(self, house_structure: Dict, wall_classification: Dict, elements: Dict) -> List[Dict]:
         """
-        Generate drawing commands for AutoCAD layer creation and geometry drawing
+        Generate drawing commands for AutoCAD layer creation and geometry drawing.
+        This creates continuous boundary traces for outer and inner boundaries.
         """
-        print("Generating drawing commands...")
+        print("Generating drawing commands for boundary highlighting...")
         
         commands = []
         
-        # Generate commands for wall layers
+        # Generate commands for wall boundaries - draw as continuous polylines
         for classification in wall_classification.get('classifications', []):
             layer_name = classification['layer_name']
             color = classification['color']
+            wall_type = classification.get('wall_type', 'interior')
             
             # Create layer command
             commands.append({
@@ -803,14 +898,20 @@ class EnhancedGeometryProcessor:
                 'linetype': 'CONTINUOUS'
             })
             
-            # Draw wall segments
-            for segment in classification['segments']:
-                commands.append({
-                    'action': 'draw_line',
-                    'start_point': segment['start'],
-                    'end_point': segment['end'],
-                    'layer_name': layer_name
-                })
+            # Convert segments to continuous polylines for boundary highlighting
+            polylines = self._segments_to_polylines(classification['segments'])
+            
+            # Draw each continuous boundary as a polyline
+            for polyline_points in polylines:
+                if len(polyline_points) >= 2:
+                    commands.append({
+                        'action': 'draw_polyline',
+                        'coordinates': polyline_points,
+                        'layer_name': layer_name,
+                        'closed': False
+                    })
+                    
+            print(f"  Created {len(polylines)} continuous {'outer' if wall_type == 'exterior' else 'inner'} boundary traces on layer '{layer_name}'")
         
         # Generate commands for elements
         for element_type in ['doors', 'windows']:
