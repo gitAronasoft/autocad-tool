@@ -178,7 +178,7 @@ class EnhancedGeometryProcessor:
         perimeter_segments = self._find_perimeter_segments(all_segments, bounds)
         
         # Group connected segments into continuous walls
-        wall_groups = self._group_connected_segments(all_segments)
+        wall_groups = self._group_connected_segments(all_segments, bounds)
         
         return {
             'outline_detected': True,
@@ -192,11 +192,11 @@ class EnhancedGeometryProcessor:
     def _find_perimeter_segments(self, segments: List[Dict], bounds: Dict) -> List[Dict]:
         """
         Identify segments that form the building perimeter (exterior walls).
-        Uses adaptive tolerance based on building size.
+        Uses adaptive tolerance based on building size and allows segments with any point near perimeter.
         """
         # Use 1% of the smaller dimension as tolerance (adaptive to drawing scale)
         building_size = min(bounds['width'], bounds['height'])
-        perimeter_tolerance = max(building_size * 0.01, 5.0)  # At least 5 units
+        perimeter_tolerance = max(building_size * 0.01, 8.0)  # At least 8 units for better detection
         
         perimeter_segments = []
         
@@ -204,20 +204,29 @@ class EnhancedGeometryProcessor:
             start_x, start_y = segment['start']
             end_x, end_y = segment['end']
             
-            # Check if segment is on or near the building perimeter
+            # Calculate midpoint for additional detection
+            mid_x = (start_x + end_x) / 2
+            mid_y = (start_y + end_y) / 2
+            
+            # Check if ANY point (start, end, or midpoint) is near the building perimeter
+            # This catches diagonal walls and corner segments more effectively
             on_perimeter = (
-                # Near left edge
-                (abs(start_x - bounds['min_x']) <= perimeter_tolerance and 
-                 abs(end_x - bounds['min_x']) <= perimeter_tolerance) or
-                # Near right edge
-                (abs(start_x - bounds['max_x']) <= perimeter_tolerance and 
-                 abs(end_x - bounds['max_x']) <= perimeter_tolerance) or
-                # Near bottom edge
-                (abs(start_y - bounds['min_y']) <= perimeter_tolerance and 
-                 abs(end_y - bounds['min_y']) <= perimeter_tolerance) or
-                # Near top edge
-                (abs(start_y - bounds['max_y']) <= perimeter_tolerance and 
-                 abs(end_y - bounds['max_y']) <= perimeter_tolerance)
+                # Near left edge (any point)
+                (abs(start_x - bounds['min_x']) <= perimeter_tolerance or
+                 abs(end_x - bounds['min_x']) <= perimeter_tolerance or
+                 abs(mid_x - bounds['min_x']) <= perimeter_tolerance) or
+                # Near right edge (any point)
+                (abs(start_x - bounds['max_x']) <= perimeter_tolerance or
+                 abs(end_x - bounds['max_x']) <= perimeter_tolerance or
+                 abs(mid_x - bounds['max_x']) <= perimeter_tolerance) or
+                # Near bottom edge (any point)
+                (abs(start_y - bounds['min_y']) <= perimeter_tolerance or
+                 abs(end_y - bounds['min_y']) <= perimeter_tolerance or
+                 abs(mid_y - bounds['min_y']) <= perimeter_tolerance) or
+                # Near top edge (any point)
+                (abs(start_y - bounds['max_y']) <= perimeter_tolerance or
+                 abs(end_y - bounds['max_y']) <= perimeter_tolerance or
+                 abs(mid_y - bounds['max_y']) <= perimeter_tolerance)
             )
             
             if on_perimeter:
@@ -226,12 +235,15 @@ class EnhancedGeometryProcessor:
         print(f"Found {len(perimeter_segments)} perimeter segments out of {len(segments)} total (tolerance: {perimeter_tolerance:.1f} units)")
         return perimeter_segments
     
-    def _group_connected_segments(self, segments: List[Dict]) -> List[Dict]:
+    def _group_connected_segments(self, segments: List[Dict], bounds: Dict) -> List[Dict]:
         """
         Group segments that are connected to form continuous walls (optimized version).
         Prioritizes longer segments for better wall detection.
+        Uses adaptive tolerance based on building size.
         """
-        connection_tolerance = 2.0  # Units
+        # Adaptive tolerance: 1% of smaller dimension, minimum 8 units
+        building_size = min(bounds['width'], bounds['height'])
+        connection_tolerance = max(building_size * 0.01, 8.0)
         groups = []
         used_segments = set()
         
@@ -242,7 +254,7 @@ class EnhancedGeometryProcessor:
         max_segments_to_process = min(len(sorted_segments), 1500)  # Balanced limit
         segments_to_process = sorted_segments[:max_segments_to_process]
         
-        print(f"Processing {len(segments_to_process)} segments for grouping (prioritized by length from {len(segments)} total)")
+        print(f"Processing {len(segments_to_process)} segments for grouping (prioritized by length from {len(segments)} total, connection tolerance: {connection_tolerance:.1f} units)")
         
         for i, segment in enumerate(segments_to_process):
             if i in used_segments:

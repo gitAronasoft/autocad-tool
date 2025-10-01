@@ -108,10 +108,20 @@ Preferred communication style: Simple, everyday language.
 - Handles large architectural drawings (7,000+ segments)
 - Completes analysis in under 30 seconds
 
-### Replit Environment Setup
-- Flask app configured to run on port 5000
-- Webview output type enabled for frontend preview
-- Deployment configured for autoscale with gunicorn
-- Database: PostgreSQL available at DATABASE_URL
-- Session management: SESSION_SECRET configured
-- OpenAI integration ready (requires OPENAI_API_KEY for AI features)
+### Replit Environment Setup (Completed October 1, 2025)
+- **Flask Web App**: Running on port 5000 with webview output
+- **Workflow**: Configured with `uv run python main.py`
+- **Deployment**: Autoscale deployment with gunicorn configured
+- **Environment Secrets**: 
+  - SESSION_SECRET: Configured ✓
+  - OPENAI_API_KEY: Configured ✓
+- **Dependencies**: All Python packages installed via uv (pyproject.toml)
+- **Web Interface**: Accessible and fully functional
+- **Project Structure**:
+  - `/src` - Core modules (architectural_analyzer.py, autocad_integration.py, enhanced_geometry_processor.py)
+  - `/templates` - Flask HTML templates
+  - `/uploads` - User uploaded DXF files
+  - `/outputs` - Processed DXF files and measurements
+  - `app.py` - Main Flask application
+  - `main.py` - Application entry point
+  - `demo.py` - Command-line demo (optional)

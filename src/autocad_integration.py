@@ -82,18 +82,23 @@ class AutoCADIntegration:
             print(f"Error creating layer {layer_name}: {e}")
             return False
     
-    def draw_polyline(self, coordinates: List[Tuple[float, float]], layer_name: str = "0"):
+    def draw_polyline(self, coordinates: List[Tuple[float, float]], layer_name: str = "0", closed: bool = False):
         """Draw a polyline on the specified layer"""
         if self.current_doc is None or self.modelspace is None:
             print("No DXF document loaded")
             return False
         
         try:
-            # Convert 2D coordinates to 3D (adding z=0)
-            points_3d = [(x, y, 0) for x, y in coordinates]
+            # LWPOLYLINE expects 2D points (x, y) not 3D
+            points_2d = [(float(x), float(y)) for x, y in coordinates]
             
-            polyline = self.modelspace.add_lwpolyline(points_3d)
+            polyline = self.modelspace.add_lwpolyline(points_2d)
             polyline.dxf.layer = layer_name
+            
+            # Set closed flag if specified
+            if closed and len(points_2d) > 2:
+                polyline.close(True)
+            
             print(f"Drew polyline with {len(coordinates)} points on layer {layer_name}")
             return True
         except Exception as e:
@@ -199,9 +204,14 @@ class AutoCADIntegration:
         
         commands_executed = 0
         
-        # Handle enhanced drawing commands if available
-        if 'drawing_commands' in analysis_result:
-            return self._execute_enhanced_commands(analysis_result['drawing_commands'])
+        # Handle enhanced drawing commands if available and non-empty
+        drawing_commands = analysis_result.get('drawing_commands', [])
+        if drawing_commands and len(drawing_commands) > 0:
+            commands_count = self._execute_enhanced_commands(drawing_commands)
+            if commands_count > 0:
+                return commands_count
+            else:
+                print("Warning: Enhanced commands executed but drew nothing. Falling back to legacy processing...")
         
         # Fallback to legacy command processing
         
@@ -720,7 +730,7 @@ class AutoCADIntegration:
                     'segments': layer_segments,
                     'total_length': sum(seg['length'] for seg in layer_segments),
                     'layers': {layer_name},
-                    'bounds': self._calculate_segment_bounds(layer_segments)
+                    'bounds': self.enhanced_processor._calculate_segment_bounds(layer_segments)
                 }
                 groups.append(layer_group)
             else:
@@ -732,7 +742,7 @@ class AutoCADIntegration:
                         'segments': chunk,
                         'total_length': sum(seg['length'] for seg in chunk),
                         'layers': {layer_name},
-                        'bounds': self._calculate_segment_bounds(chunk)
+                        'bounds': self.enhanced_processor._calculate_segment_bounds(chunk)
                     }
                     groups.append(chunk_group)
         

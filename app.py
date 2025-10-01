@@ -68,7 +68,7 @@ def process_file():
 def process_dxf_file(filepath, analyzer, autocad):
     """Process a DXF file and return analysis results"""
     try:
-        # Load the DXF file
+        # Load the DXF file for analysis
         success = autocad.load_dxf_file(filepath)
         if not success:
             return {'success': False, 'error': 'Could not load DXF file'}
@@ -78,29 +78,6 @@ def process_dxf_file(filepath, analyzer, autocad):
         
         # Use the new geometric analysis method with AI enhancement instead of hardcoded coordinates
         analysis_result = autocad.analyze_dxf_geometry(analyzer)
-        
-        layers_created = []
-        elements_detected = 0
-        
-        # Create layers dynamically based on real analysis results
-        for space in analysis_result.get('spaces', []):
-            layer_name = space['layer_name']
-            wall_type = space['type']
-            
-            # Get appropriate color for the wall type
-            color = autocad.get_layer_color(wall_type)
-            autocad.create_layer(layer_name, color)
-            layers_created.append(layer_name)
-        
-        # Create layers for any detected elements (doors, windows, etc.)
-        for element in analysis_result.get('elements', []):
-            layer_name = element['layer_name']
-            element_type = element['type']
-            
-            color = autocad.get_layer_color(element_type)
-            autocad.create_layer(layer_name, color)
-            if layer_name not in layers_created:
-                layers_created.append(layer_name)
         
         # Log analysis metadata for debugging
         metadata = analysis_result.get('analysis_metadata', {})
@@ -114,14 +91,30 @@ def process_dxf_file(filepath, analyzer, autocad):
             if metadata.get('fallback_used'):
                 print("  Warning: Using fallback analysis - no geometry detected")
         
-        # Execute the drawing commands
-        commands_executed = autocad.execute_autocad_commands(analysis_result)
+        # Create a NEW clean DXF document for the output (only highlighted boundaries)
+        print("Creating clean output with only highlighted wall boundaries...")
+        autocad_clean = AutoCADIntegration()
+        autocad_clean.create_new_dxf()
+        
+        layers_created = []
+        
+        # Execute the drawing commands on the clean document
+        commands_executed = autocad_clean.execute_autocad_commands(analysis_result)
         elements_detected = commands_executed
         
-        # Save the processed file
+        # Collect layer names from the drawing commands
+        for cmd in analysis_result.get('drawing_commands', []):
+            if cmd.get('action') == 'create_layer':
+                layer_name = cmd.get('layer_name')
+                if layer_name and layer_name not in layers_created:
+                    layers_created.append(layer_name)
+        
+        # Save the clean processed file (only boundaries and elements)
         output_filename = f"processed_{os.path.basename(filepath)}"
         output_path = os.path.join('outputs', output_filename)
-        autocad.save_dxf(output_path)
+        autocad_clean.save_dxf(output_path)
+        
+        print(f"Saved clean output with {commands_executed} highlighted boundaries")
         
         # Export measurements if available
         export_urls = {}
