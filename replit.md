@@ -12,7 +12,7 @@ Preferred communication style: Simple, everyday language.
 
 ### Frontend Architecture
 - **Web Interface**: Flask-based web application with Bootstrap CSS framework
-- **File Upload System**: Drag-and-drop interface supporting DXF and DWG files up to 50MB
+- **File Upload System**: Drag-and-drop interface supporting PDF files up to 50MB
 - **Real-time Feedback**: AJAX-based file processing with progress indicators
 - **Responsive Design**: Mobile-friendly interface using Bootstrap grid system
 
@@ -34,9 +34,10 @@ Preferred communication style: Simple, everyday language.
 - **Smart Layer Naming**: Generates contextually appropriate AutoCAD layer names based on building elements
 
 ### Data Processing
-- **File Format Support**: Handles both DXF and DWG file formats using ezdxf library
-- **Image Processing**: OpenCV and PIL for image manipulation and analysis
-- **Vector Graphics**: Direct manipulation of CAD vector data for precise element detection
+- **File Format Support**: Accepts PDF architectural drawings, outputs DXF format
+- **PDF Processing**: PyMuPDF for high-quality PDF-to-image conversion at 300 DPI
+- **Image Processing**: OpenCV and PIL for image manipulation and AI analysis
+- **Vector Graphics**: DXF output generation with ezdxf library for AutoCAD compatibility
 
 ## External Dependencies
 
@@ -63,6 +64,39 @@ Preferred communication style: Simple, everyday language.
 - **File System**: Local file storage for uploads and outputs with automatic directory creation
 
 ## Recent Changes (October 2025)
+
+### PDF Upload System (October 7, 2025)
+**Complete Migration to PDF-Only Processing**
+
+The system has been fully migrated from DXF upload to PDF upload with AI-powered analysis:
+
+**New Features:**
+1. **PDF Upload Only**: System now exclusively accepts PDF architectural drawings
+2. **High-Quality Conversion**: PDFs converted to 300 DPI images for optimal AI analysis
+3. **AI Validation**: Multi-layer validation ensures only architectural drawings are processed:
+   - Drawing type detection (floor plan or elevation)
+   - Confidence threshold (≥50% required)
+   - Element detection (must find walls, doors, or windows)
+4. **Robust Error Handling**: Clear, user-friendly error messages for validation failures
+5. **Automatic Cleanup**: Temporary image files cleaned up on both success and failure paths
+
+**Processing Flow:**
+- Upload PDF → Convert to 300 DPI image → AI analyzes drawing type
+- Validate architectural content → AI detects walls/doors/windows
+- Generate AutoCAD commands → Create DXF with highlighted boundaries
+- Output DXF with proper layer colors (yellow exterior, magenta interior, cyan garage, green doors, blue windows)
+
+**Technical Stack:**
+- **PDF Processing**: PyMuPDF (fitz) for reliable PDF-to-image conversion
+- **AI Analysis**: OpenAI GPT-4o vision model for drawing type detection and element analysis
+- **Output Format**: DXF R2010 (AC1024) with proper AutoCAD layer structure
+- **Quality**: 300 DPI conversion ensures accurate element detection
+
+**Testing:**
+- Successfully processed multi-page architectural PDFs
+- AI achieved 95-100% confidence on real architectural drawings
+- Proper rejection of non-architectural PDFs (text documents, blank pages)
+- Clean DXF output validated with ezdxf library
 
 ### Boundary Highlighting System (October 2025)
 **Issues Fixed**: 

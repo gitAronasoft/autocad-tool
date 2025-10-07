@@ -163,6 +163,174 @@ class AutoCADIntegration:
             print(f"Error drawing arc: {e}")
             return False
     
+    def insert_pdf_as_geometry(self, image_path: str, analysis_result: Dict):
+        """Convert PDF image to actual DXF line geometry using edge detection"""
+        if self.current_doc is None or self.modelspace is None:
+            print("No DXF document loaded")
+            return False
+        
+        try:
+            import cv2
+            import numpy as np
+            from PIL import Image
+            
+            # Load image
+            img = cv2.imread(image_path)
+            if img is None:
+                print(f"Could not load image: {image_path}")
+                return False
+            
+            # Get image dimensions
+            img_height, img_width = img.shape[:2]
+            
+            # Calculate scaling factor to fit drawing bounds
+            scale_factor = 1000.0 / max(img_width, img_height)
+            dxf_width = img_width * scale_factor
+            dxf_height = img_height * scale_factor
+            
+            print(f"Converting {img_width}x{img_height} image to DXF geometry ({dxf_width:.1f}x{dxf_height:.1f} units)")
+            
+            # Convert to grayscale
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            
+            # Apply edge detection
+            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+            
+            # Find contours (these represent the drawing lines)
+            contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+            
+            # Create layer for original drawing geometry - use black (7) for visibility
+            self.create_layer("ORIGINAL_DRAWING", color=7, linetype='CONTINUOUS')
+            
+            # Convert contours to DXF polylines
+            lines_drawn = 0
+            for contour in contours:
+                if len(contour) < 2:
+                    continue
+                
+                # Convert contour points to DXF coordinates
+                points = []
+                for point in contour:
+                    x = point[0][0] * scale_factor
+                    # Flip Y coordinate (image origin is top-left, DXF is bottom-left)
+                    y = (img_height - point[0][1]) * scale_factor
+                    points.append((x, y))
+                
+                # Draw polyline if we have enough points
+                if len(points) >= 2:
+                    self.draw_polyline(points, "ORIGINAL_DRAWING", closed=False)
+                    lines_drawn += 1
+                    
+                    # Limit number of lines to prevent massive files
+                    if lines_drawn >= 5000:
+                        break
+            
+            print(f"Converted PDF to {lines_drawn} line segments on ORIGINAL_DRAWING layer")
+            
+            # Store contours for wall boundary detection
+            self._contours = contours
+            self._img_dimensions = (img_width, img_height)
+            self._scale_factor = scale_factor
+            
+            return True
+            
+        except Exception as e:
+            print(f"Warning: Could not convert PDF to geometry: {e}")
+            import traceback
+            traceback.print_exc()
+            print("Continuing without original drawing geometry")
+            return False
+    
+    def detect_wall_boundaries_from_geometry(self, trace_options: Dict) -> Dict:
+        """Detect outer and inner wall boundaries from the converted geometry"""
+        if not hasattr(self, '_contours'):
+            print("No contours available for boundary detection")
+            return {'outer_boundaries': [], 'inner_boundaries': []}
+        
+        import cv2
+        import numpy as np
+        
+        contours = self._contours
+        img_width, img_height = self._img_dimensions
+        scale_factor = self._scale_factor
+        
+        print(f"Analyzing {len(contours)} contours for wall boundaries...")
+        
+        # Calculate contour areas and sort by size
+        contour_data = []
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > 100:  # Filter out very small contours
+                contour_data.append({
+                    'contour': contour,
+                    'area': area
+                })
+        
+        contour_data.sort(key=lambda x: x['area'], reverse=True)
+        
+        # The largest contour is typically the outer boundary
+        outer_boundaries = []
+        inner_boundaries = []
+        
+        if contour_data:
+            # Outer boundary (largest contour)
+            largest = contour_data[0]
+            points = []
+            for point in largest['contour']:
+                x = point[0][0] * scale_factor
+                y = (img_height - point[0][1]) * scale_factor
+                points.append((x, y))
+            
+            if len(points) >= 4:
+                outer_boundaries.append({
+                    'points': points,
+                    'area': largest['area'],
+                    'type': 'exterior'
+                })
+                print(f"Detected outer boundary: {len(points)} points, area {largest['area']:.0f}")
+            
+            # Inner boundaries (next largest contours that are enclosed)
+            max_inner_boundaries = 5
+            for i, data in enumerate(contour_data[1:max_inner_boundaries+1]):
+                points = []
+                for point in data['contour']:
+                    x = point[0][0] * scale_factor
+                    y = (img_height - point[0][1]) * scale_factor
+                    points.append((x, y))
+                
+                if len(points) >= 4:
+                    inner_boundaries.append({
+                        'points': points,
+                        'area': data['area'],
+                        'type': 'interior'
+                    })
+                    print(f"Detected inner boundary {i+1}: {len(points)} points, area {data['area']:.0f}")
+        
+        return {
+            'outer_boundaries': outer_boundaries,
+            'inner_boundaries': inner_boundaries
+        }
+    
+    def draw_wall_boundary_highlights(self, wall_boundaries: Dict) -> int:
+        """Draw highlighted polylines for wall boundaries"""
+        commands_executed = 0
+        
+        # Draw outer boundaries (exterior walls) in yellow
+        self.create_layer("EXTERIOR_WALL_HIGHLIGHT", color=2, linetype='CONTINUOUS')
+        for boundary in wall_boundaries.get('outer_boundaries', []):
+            if self.draw_polyline(boundary['points'], "EXTERIOR_WALL_HIGHLIGHT", closed=True):
+                commands_executed += 1
+                print(f"Drew exterior wall boundary with {len(boundary['points'])} points")
+        
+        # Draw inner boundaries (interior walls) in cyan
+        self.create_layer("INTERIOR_WALL_HIGHLIGHT", color=4, linetype='CONTINUOUS')
+        for boundary in wall_boundaries.get('inner_boundaries', []):
+            if self.draw_polyline(boundary['points'], "INTERIOR_WALL_HIGHLIGHT", closed=True):
+                commands_executed += 1
+                print(f"Drew interior wall boundary with {len(boundary['points'])} points")
+        
+        return commands_executed
+    
     def save_dxf(self, output_path: str):
         """Save the current DXF document"""
         if self.current_doc is None:

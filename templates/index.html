@@ -47,7 +47,7 @@
                     <h1 class="display-4 mb-4">
                         <i class="fas fa-brain"></i> AI-Powered AutoCAD Analyzer
                     </h1>
-                    <p class="lead">Upload your architectural drawings and let AI automatically detect walls, doors, windows, and create proper AutoCAD layers</p>
+                    <p class="lead">Upload your PDF architectural drawings and let AI automatically detect walls, doors, windows, and create proper AutoCAD layers</p>
                 </div>
             </div>
         </div>
@@ -59,15 +59,15 @@
             <div class="col-12">
                 <div class="card shadow-lg">
                     <div class="card-header bg-primary text-white">
-                        <h3 class="mb-0"><i class="fas fa-upload"></i> Upload DXF CAD File</h3>
+                        <h3 class="mb-0"><i class="fas fa-upload"></i> Upload PDF Drawing File</h3>
                     </div>
                     <div class="card-body">
                         <form id="uploadForm" enctype="multipart/form-data">
                             <div class="upload-area" id="uploadArea">
                                 <i class="fas fa-cloud-upload-alt fa-3x text-primary mb-3"></i>
-                                <h4>Drag & Drop your DXF file here</h4>
+                                <h4>Drag & Drop your PDF file here</h4>
                                 <p class="text-muted">or click to select a file</p>
-                                <input type="file" id="fileInput" name="dxf_file" accept=".dxf" style="display: none;">
+                                <input type="file" id="fileInput" name="pdf_file" accept=".pdf" style="display: none;">
                                 <button type="button" class="btn btn-primary" id="chooseFileBtn">
                                     <i class="fas fa-folder-open"></i> Choose File
                                 </button>
@@ -270,12 +270,12 @@
         function handleFileSelect() {
             const file = fileInput.files[0];
             if (file) {
-                // Check file type - only DXF is supported
-                const allowedTypes = ['dxf'];
+                // Check file type - only PDF is supported
+                const allowedTypes = ['pdf'];
                 const fileExtension = file.name.split('.').pop().toLowerCase();
                 
                 if (!allowedTypes.includes(fileExtension)) {
-                    alert('Please select a DXF file. DWG files require conversion to DXF format.');
+                    alert('Please select a PDF file. PDF architectural drawings only.');
                     fileInput.value = '';
                     return;
                 }
@@ -321,7 +321,7 @@
             }
             
             const formData = new FormData();
-            formData.append('dxf_file', fileInput.files[0]);
+            formData.append('pdf_file', fileInput.files[0]);
             formData.append('trace_walls', traceWalls.checked);
             formData.append('trace_doors', traceDoors.checked);
             formData.append('trace_windows', traceWindows.checked);
