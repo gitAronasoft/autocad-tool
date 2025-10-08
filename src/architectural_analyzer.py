@@ -113,37 +113,41 @@ class ArchitecturalAnalyzer:
         base64_image = self.encode_image_to_base64(image_path)
 
         prompt = """
-        You are an expert architectural analyst. Analyze this floor plan and identify:
+        You are an expert architectural analyst. Analyze this floor plan and identify wall boundaries with PRECISE pixel coordinates.
 
-        1. Floor type (basement, main_floor, second_floor, etc.)
-        2. Interior walls (walls inside the house)
-        3. Exterior walls (walls forming the house perimeter)
-        4. Garage spaces (unheated but enclosed areas)
-        5. Buffered/protected walls (walls adjacent to garage or other unheated spaces)
-        6. Room types and their boundaries
+        CRITICAL: Provide EXACT pixel coordinates from the image for drawing wall centerlines.
+        
+        Identify:
+        1. EXTERIOR walls - the outermost perimeter walls of the building
+        2. INTERIOR walls - all walls inside the building (room dividers, hallways, etc.)
+        
+        For each wall boundary, trace along the CENTER of the wall line and provide coordinates as pixel positions [x, y] where:
+        - x = horizontal position (0 = left edge of image)
+        - y = vertical position (0 = top edge of image)
+        - Coordinates should follow the wall path with enough points to capture corners and changes in direction
+        - Each wall boundary should form a closed path (first point = last point)
 
-        For each wall or space, provide coordinates where lines should be drawn to trace:
-        - Interior walls
-        - Exterior walls  
-        - Garage-adjacent walls (different from full exterior)
+        IMPORTANT: 
+        - Be PRECISE with pixel coordinates - accuracy is critical
+        - Include enough coordinate points to accurately represent the wall path
+        - For exterior walls, trace the complete outer perimeter
+        - For interior walls, trace each room's wall boundaries separately
 
-        Respond in JSON format with:
+        Respond in JSON format:
         {
             "floor_type": "basement/main_floor/second_floor",
             "spaces": [
                 {
-                    "type": "interior/exterior/garage_adjacent",
-                    "coordinates": [[x1,y1], [x2,y2], ...],
-                    "layer_name": "suggested_layer_name"
-                }
-            ],
-            "rooms": [
-                {
-                    "type": "living_room/kitchen/garage/etc",
-                    "boundaries": [[x1,y1], [x2,y2], ...]
+                    "type": "exterior" or "interior",
+                    "coordinates": [[x1,y1], [x2,y2], [x3,y3], ..., [x1,y1]],
+                    "layer_name": "suggested_layer_name",
+                    "description": "brief description of this wall boundary"
                 }
             ]
         }
+        
+        Example coordinates for a rectangular exterior wall:
+        "coordinates": [[100,50], [500,50], [500,300], [100,300], [100,50]]
         """
 
         response = openai.chat.completions.create(

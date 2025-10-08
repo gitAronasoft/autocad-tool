@@ -151,6 +151,12 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
         if drawing_type == 'floor_plan':
             print("Analyzing floor plan...")
             analysis_result = analyzer.analyze_floor_plan(image_path)
+            print(f"DEBUG - AI found {len(analysis_result.get('spaces', []))} wall boundaries:")
+            for i, space in enumerate(analysis_result.get('spaces', [])):
+                coords = space.get('coordinates', [])
+                print(f"  Space {i+1} ({space.get('type')}): {len(coords)} coordinate points")
+                if coords:
+                    print(f"    Sample coords: {coords[:3]}...")
         else:
             print("Analyzing elevation...")
             analysis_result = analyzer.analyze_elevation(image_path)
@@ -171,18 +177,23 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
         # Add drawing type to results
         analysis_result['drawing_type'] = drawing_type
         
-        # Step 3: Extract wall boundaries from the vectorized geometry
-        print("Extracting wall boundaries from PDF geometry...")
+        # Step 3: Use AI coordinates directly for maximum accuracy
+        print("Creating DXF with AI-detected boundaries...")
         autocad_clean = AutoCADIntegration()
         autocad_clean.create_new_dxf()
         
-        # Convert PDF image to actual DXF geometry (vectorize it)
-        print("Converting PDF image to DXF line geometry...")
+        # Insert PDF image as raster underlay
+        print("Inserting PDF as raster underlay...")
         autocad_clean.insert_pdf_as_geometry(image_path, analysis_result)
         
-        # Now detect wall boundaries from the geometry instead of AI coordinates
-        print("Detecting wall boundaries from actual geometry...")
-        wall_boundaries = autocad_clean.detect_wall_boundaries_from_geometry(trace_options)
+        # Get image dimensions for coordinate scaling
+        from PIL import Image
+        with Image.open(image_path) as img:
+            image_dimensions = img.size  # (width, height)
+        
+        # Use AI coordinates directly (MOST ACCURATE - no edge detection!)
+        print("Extracting wall boundaries from AI analysis (using precise AI coordinates)...")
+        wall_boundaries = autocad_clean.detect_wall_boundaries_from_ai(analysis_result, image_dimensions, trace_options)
         
         # Draw the detected wall boundaries as highlights ON TOP of original geometry
         # This preserves both the original drawing AND the highlights

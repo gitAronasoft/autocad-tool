@@ -164,7 +164,7 @@ class AutoCADIntegration:
             return False
     
     def insert_pdf_as_geometry(self, image_path: str, analysis_result: Dict):
-        """Convert PDF image to actual DXF line geometry using edge detection"""
+        """Insert PDF image as a raster underlay in DXF and prepare for boundary detection"""
         if self.current_doc is None or self.modelspace is None:
             print("No DXF document loaded")
             return False
@@ -173,6 +173,7 @@ class AutoCADIntegration:
             import cv2
             import numpy as np
             from PIL import Image
+            import os
             
             # Load image
             img = cv2.imread(image_path)
@@ -188,69 +189,170 @@ class AutoCADIntegration:
             dxf_width = img_width * scale_factor
             dxf_height = img_height * scale_factor
             
-            print(f"Converting {img_width}x{img_height} image to DXF geometry ({dxf_width:.1f}x{dxf_height:.1f} units)")
+            print(f"Inserting {img_width}x{img_height} PDF image as DXF underlay ({dxf_width:.1f}x{dxf_height:.1f} units)")
             
-            # Convert to grayscale
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            # Create ORIGINAL_DRAWING layer for the traced drawing
+            self.create_layer("ORIGINAL_DRAWING", color=8, linetype='CONTINUOUS')
             
-            # Apply edge detection
-            edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-            
-            # Find contours (these represent the drawing lines)
-            contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-            
-            # Create layer for original drawing geometry - use black (7) for visibility
-            self.create_layer("ORIGINAL_DRAWING", color=7, linetype='CONTINUOUS')
-            
-            # Convert contours to DXF polylines
-            lines_drawn = 0
-            for contour in contours:
-                if len(contour) < 2:
-                    continue
+            # Method 1: Try to insert image as raster entity (best quality if viewer supports it)
+            image_inserted = False
+            try:
+                # Get absolute path for image
+                abs_image_path = os.path.abspath(image_path)
                 
-                # Convert contour points to DXF coordinates
-                points = []
-                for point in contour:
-                    x = point[0][0] * scale_factor
-                    # Flip Y coordinate (image origin is top-left, DXF is bottom-left)
-                    y = (img_height - point[0][1]) * scale_factor
-                    points.append((x, y))
+                # Insert the image at origin with proper scaling
+                image_def = self.current_doc.add_image_def(filename=abs_image_path, size_in_pixel=(img_width, img_height))
+                image_entity = self.modelspace.add_image(image_def=image_def, insert=(0, 0), size_in_units=(dxf_width, dxf_height))
+                image_entity.dxf.layer = "ORIGINAL_DRAWING"
                 
-                # Draw polyline if we have enough points
-                if len(points) >= 2:
-                    self.draw_polyline(points, "ORIGINAL_DRAWING", closed=False)
-                    lines_drawn += 1
-                    
-                    # Limit number of lines to prevent massive files
-                    if lines_drawn >= 5000:
-                        break
+                print(f"✅ Inserted PDF image as raster underlay in DXF (IMAGE entity)")
+                image_inserted = True
+            except Exception as e:
+                print(f"⚠️ Could not insert image as raster entity: {e}")
             
-            print(f"Converted PDF to {lines_drawn} line segments on ORIGINAL_DRAWING layer")
+            # Method 2: Trace line segments from edge detection as backup geometry (if available)
+            # This ensures the drawing is ALWAYS visible even if IMAGE entity doesn't render
+            if hasattr(self, '_all_contours') and self._all_contours:
+                print("Creating vector trace of original drawing for maximum compatibility...")
+                
+                # Trace significant line segments detected from the image
+                line_count = 0
+                for i, contour in enumerate(self._all_contours[:500]):  # Limit to avoid excessive data
+                    area = cv2.contourArea(contour)
+                    if area > 50:  # Only significant contours
+                        # Convert contour to line segments
+                        for j in range(len(contour)):
+                            p1 = contour[j][0]
+                            p2 = contour[(j + 1) % len(contour)][0]
+                            
+                            # Convert to DXF coordinates
+                            x1 = p1[0] * scale_factor
+                            y1 = (img_height - p1[1]) * scale_factor
+                            x2 = p2[0] * scale_factor
+                            y2 = (img_height - p2[1]) * scale_factor
+                            
+                            # Draw line on ORIGINAL_DRAWING layer
+                            self.draw_line((x1, y1), (x2, y2), "ORIGINAL_DRAWING")
+                            line_count += 1
+                
+                print(f"✅ Traced {line_count} line segments from original drawing on ORIGINAL_DRAWING layer")
+                print(f"   Layer ORIGINAL_DRAWING contains {'raster image + ' if image_inserted else ''}vector geometry")
+            else:
+                print("⚠️ No edge detection contours available for vector tracing")
+                print(f"   Layer ORIGINAL_DRAWING contains {'raster image only' if image_inserted else 'no geometry'}")
             
-            # Store contours for wall boundary detection
-            self._contours = contours
-            self._img_dimensions = (img_width, img_height)
-            self._scale_factor = scale_factor
+            # Process image for boundary detection (for fallback edge detection if needed)
+            try:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                
+                # Use multiple edge detection methods for comprehensive boundary detection
+                edges1 = cv2.Canny(gray, 30, 100, apertureSize=3)
+                edges2 = cv2.Canny(gray, 50, 150, apertureSize=3)
+                binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                                             cv2.THRESH_BINARY_INV, 11, 2)
+                
+                # Combine all edge detections
+                combined = cv2.bitwise_or(cv2.bitwise_or(edges1, edges2), binary)
+                
+                # Find ALL contours for boundary detection
+                contours, _ = cv2.findContours(combined, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+                
+                # Store data for wall boundary detection
+                self._all_contours = contours
+                self._img_dimensions = (img_width, img_height)
+                self._scale_factor = scale_factor
+                self._dxf_dimensions = (dxf_width, dxf_height)
+                
+                print(f"Prepared {len(contours)} contours for boundary detection")
+            except Exception as e:
+                print(f"Note: Edge detection not available: {e}")
+                # Initialize empty contours for fallback
+                self._all_contours = []
+                self._img_dimensions = (img_width, img_height)
+                self._scale_factor = scale_factor
+                self._dxf_dimensions = (dxf_width, dxf_height)
             
             return True
             
         except Exception as e:
-            print(f"Warning: Could not convert PDF to geometry: {e}")
+            print(f"Warning: Could not insert PDF as geometry: {e}")
             import traceback
             traceback.print_exc()
             print("Continuing without original drawing geometry")
             return False
     
+    def detect_wall_boundaries_from_ai(self, analysis_result: Dict, image_dimensions: tuple, trace_options: Dict) -> Dict:
+        """Extract wall boundaries from AI analysis results with proper coordinate scaling - MOST ACCURATE"""
+        
+        img_width, img_height = image_dimensions
+        
+        # Calculate scaling factor to fit drawing bounds
+        scale_factor = 1000.0 / max(img_width, img_height)
+        dxf_width = img_width * scale_factor
+        dxf_height = img_height * scale_factor
+        
+        print(f"Converting AI coordinates from {img_width}x{img_height} pixels to {dxf_width:.1f}x{dxf_height:.1f} DXF units")
+        
+        def convert_ai_coords_to_dxf(ai_coords):
+            """Convert AI pixel coordinates to DXF coordinates"""
+            dxf_points = []
+            for point in ai_coords:
+                # AI gives [x, y] in pixel coordinates
+                x_pixel, y_pixel = point[0], point[1]
+                
+                # Convert to DXF coordinates
+                x_dxf = x_pixel * scale_factor
+                # Flip Y coordinate (image origin is top-left, DXF is bottom-left)
+                y_dxf = (img_height - y_pixel) * scale_factor
+                
+                dxf_points.append((x_dxf, y_dxf))
+            
+            return dxf_points
+        
+        # Extract boundaries from AI analysis
+        outer_boundaries = []
+        inner_boundaries = []
+        
+        # Process spaces from AI analysis
+        for space in analysis_result.get('spaces', []):
+            space_type = space.get('type', 'interior')
+            ai_coordinates = space.get('coordinates', [])
+            
+            if not ai_coordinates or len(ai_coordinates) < 2:
+                continue
+            
+            # Convert AI coordinates to DXF coordinates
+            dxf_coords = convert_ai_coords_to_dxf(ai_coordinates)
+            
+            # Categorize by type
+            if 'exterior' in space_type.lower():
+                outer_boundaries.append({
+                    'points': dxf_coords,
+                    'type': 'exterior'
+                })
+            else:
+                inner_boundaries.append({
+                    'points': dxf_coords,
+                    'type': 'interior'
+                })
+        
+        print(f"Extracted from AI: {len(outer_boundaries)} exterior boundaries, {len(inner_boundaries)} interior boundaries")
+        
+        return {
+            'outer_boundaries': outer_boundaries,
+            'inner_boundaries': inner_boundaries
+        }
+    
     def detect_wall_boundaries_from_geometry(self, trace_options: Dict) -> Dict:
-        """Detect outer and inner wall boundaries from the converted geometry"""
-        if not hasattr(self, '_contours'):
+        """Detect outer and inner wall boundaries from the SAME contours used for drawing"""
+        if not hasattr(self, '_all_contours'):
             print("No contours available for boundary detection")
             return {'outer_boundaries': [], 'inner_boundaries': []}
         
         import cv2
         import numpy as np
         
-        contours = self._contours
+        contours = self._all_contours
         img_width, img_height = self._img_dimensions
         scale_factor = self._scale_factor
         
@@ -268,7 +370,7 @@ class AutoCADIntegration:
         
         contour_data.sort(key=lambda x: x['area'], reverse=True)
         
-        # The largest contour is typically the outer boundary
+        # The largest contours represent wall boundaries
         outer_boundaries = []
         inner_boundaries = []
         
@@ -278,6 +380,7 @@ class AutoCADIntegration:
             points = []
             for point in largest['contour']:
                 x = point[0][0] * scale_factor
+                # Use EXACT SAME transformation as original drawing
                 y = (img_height - point[0][1]) * scale_factor
                 points.append((x, y))
             
@@ -295,6 +398,7 @@ class AutoCADIntegration:
                 points = []
                 for point in data['contour']:
                     x = point[0][0] * scale_factor
+                    # Use EXACT SAME transformation as original drawing
                     y = (img_height - point[0][1]) * scale_factor
                     points.append((x, y))
                 
