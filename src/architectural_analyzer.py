@@ -105,7 +105,7 @@ class ArchitecturalAnalyzer:
 
     def analyze_floor_plan(self, image_path: str) -> Dict:
         """
-        Analyze floor plan to detect walls, rooms, and spaces
+        Analyze floor plan to detect walls, rooms, and spaces with improved accuracy
         """
         if not openai:
             raise Exception("OpenAI API key not configured. Please set up your OpenAI API key to use AI analysis features.")
@@ -113,41 +113,82 @@ class ArchitecturalAnalyzer:
         base64_image = self.encode_image_to_base64(image_path)
 
         prompt = """
-        You are an expert architectural analyst. Analyze this floor plan and identify wall boundaries with PRECISE pixel coordinates.
+        You are an expert architectural analyst. Analyze this floor plan and identify wall boundaries with MAXIMUM PRECISION.
 
-        CRITICAL: Provide EXACT pixel coordinates from the image for drawing wall centerlines.
+        CRITICAL REQUIREMENTS:
         
-        Identify:
-        1. EXTERIOR walls - the outermost perimeter walls of the building
-        2. INTERIOR walls - all walls inside the building (room dividers, hallways, etc.)
+        1. OUTER BOUNDARY (Building Perimeter):
+           - Identify the COMPLETE outer perimeter of the building as ONE closed polyline
+           - This is the exterior wall that forms the building's outer edge
+           - Trace along the CENTER of the wall thickness
+           - Must be a CLOSED path (first point MUST equal last point)
+           - Include ALL corners and direction changes
         
-        For each wall boundary, trace along the CENTER of the wall line and provide coordinates as pixel positions [x, y] where:
-        - x = horizontal position (0 = left edge of image)
-        - y = vertical position (0 = top edge of image)
-        - Coordinates should follow the wall path with enough points to capture corners and changes in direction
-        - Each wall boundary should form a closed path (first point = last point)
-
-        IMPORTANT: 
-        - Be PRECISE with pixel coordinates - accuracy is critical
-        - Include enough coordinate points to accurately represent the wall path
-        - For exterior walls, trace the complete outer perimeter
-        - For interior walls, trace each room's wall boundaries separately
-
+        2. INNER BOUNDARIES (Room Dividers):
+           - Identify ALL interior walls as SEPARATE closed polylines
+           - Each room's perimeter should be one closed boundary
+           - Trace along the CENTER of each wall thickness
+           - Each boundary MUST be CLOSED (first point = last point)
+           - Include hallways, closets, and all interior spaces
+        
+        COORDINATE REQUIREMENTS:
+        - Provide EXACT pixel coordinates [x, y] where:
+          * x = horizontal position (0 = left edge of image)
+          * y = vertical position (0 = top edge of image)
+        - Include enough points to capture ALL corners and curves
+        - Minimum 4 points for rectangular spaces
+        - First point MUST equal last point for closed paths
+        - Accuracy is CRITICAL - measure precisely
+        
+        IMPORTANT RULES:
+        - There should be EXACTLY ONE "exterior" type boundary (the building perimeter)
+        - All other boundaries should be "interior" type (room dividers)
+        - Each boundary must form a complete, closed loop
+        - Do NOT include partial walls or open paths
+        
         Respond in JSON format:
         {
             "floor_type": "basement/main_floor/second_floor",
             "spaces": [
                 {
-                    "type": "exterior" or "interior",
-                    "coordinates": [[x1,y1], [x2,y2], [x3,y3], ..., [x1,y1]],
-                    "layer_name": "suggested_layer_name",
-                    "description": "brief description of this wall boundary"
+                    "type": "exterior",
+                    "coordinates": [[x1,y1], [x2,y2], ..., [x1,y1]],
+                    "layer_name": "EXTERIOR_WALL_HIGHLIGHT",
+                    "description": "Complete building perimeter"
+                },
+                {
+                    "type": "interior",
+                    "coordinates": [[x1,y1], [x2,y2], ..., [x1,y1]],
+                    "layer_name": "INTERIOR_WALL_HIGHLIGHT",
+                    "description": "Room/space name"
                 }
             ]
         }
         
-        Example coordinates for a rectangular exterior wall:
-        "coordinates": [[100,50], [500,50], [500,300], [100,300], [100,50]]
+        Example for a house with 2 rooms:
+        {
+            "floor_type": "main_floor",
+            "spaces": [
+                {
+                    "type": "exterior",
+                    "coordinates": [[100,50], [500,50], [500,300], [100,300], [100,50]],
+                    "layer_name": "EXTERIOR_WALL_HIGHLIGHT",
+                    "description": "Building outer perimeter"
+                },
+                {
+                    "type": "interior",
+                    "coordinates": [[150,100], [250,100], [250,250], [150,250], [150,100]],
+                    "layer_name": "INTERIOR_WALL_HIGHLIGHT",
+                    "description": "Living room"
+                },
+                {
+                    "type": "interior",
+                    "coordinates": [[300,100], [450,100], [450,250], [300,250], [300,100]],
+                    "layer_name": "INTERIOR_WALL_HIGHLIGHT",
+                    "description": "Bedroom"
+                }
+            ]
+        }
         """
 
         response = openai.chat.completions.create(
@@ -182,7 +223,82 @@ class ArchitecturalAnalyzer:
             result = json.loads(content)
         except json.JSONDecodeError as e:
             raise ValueError(f"Failed to decode JSON response from OpenAI API: {e}. Response content: {content}")
+        
+        # Validate and clean the analysis result
+        result = self._validate_and_fix_floor_plan_analysis(result)
+        
         return result
+    
+    def _validate_and_fix_floor_plan_analysis(self, analysis: Dict) -> Dict:
+        """
+        Validate floor plan analysis and fix common issues
+        - Ensures paths are closed
+        - Validates coordinate format
+        - Ensures at least one exterior boundary exists
+        """
+        if 'spaces' not in analysis:
+            raise ValueError("AI analysis missing 'spaces' field")
+        
+        spaces = analysis.get('spaces', [])
+        if not spaces:
+            raise ValueError("AI analysis returned no wall boundaries")
+        
+        validated_spaces = []
+        exterior_count = 0
+        
+        for i, space in enumerate(spaces):
+            space_type = space.get('type', 'interior')
+            coords = space.get('coordinates', [])
+            
+            # Validate coordinates exist and have minimum points
+            if not coords or len(coords) < 3:
+                print(f"Warning: Space {i+1} has insufficient coordinates ({len(coords)} points), skipping")
+                continue
+            
+            # Ensure path is closed (first point equals last point)
+            first_point = coords[0]
+            last_point = coords[-1]
+            
+            # Check if path is already closed (within small tolerance)
+            is_closed = (abs(first_point[0] - last_point[0]) < 1 and 
+                        abs(first_point[1] - last_point[1]) < 1)
+            
+            if not is_closed:
+                # Close the path by adding first point at the end
+                coords.append(first_point)
+                print(f"Fixed: Closed path for space {i+1} ({space_type})")
+            
+            # Update space with validated coordinates
+            space['coordinates'] = coords
+            
+            # Count exterior boundaries
+            if 'exterior' in space_type.lower():
+                exterior_count += 1
+                # Ensure layer name is correct
+                space['layer_name'] = 'EXTERIOR_WALL_HIGHLIGHT'
+            else:
+                space['layer_name'] = 'INTERIOR_WALL_HIGHLIGHT'
+            
+            validated_spaces.append(space)
+        
+        # Validate we have at least one exterior boundary
+        if exterior_count == 0:
+            print("Warning: No exterior boundary detected, treating largest boundary as exterior")
+            if validated_spaces:
+                # Find the boundary with most points (likely the exterior)
+                largest_idx = max(range(len(validated_spaces)), 
+                                 key=lambda i: len(validated_spaces[i]['coordinates']))
+                validated_spaces[largest_idx]['type'] = 'exterior'
+                validated_spaces[largest_idx]['layer_name'] = 'EXTERIOR_WALL_HIGHLIGHT'
+                exterior_count = 1
+        
+        if exterior_count > 1:
+            print(f"Warning: Multiple exterior boundaries detected ({exterior_count}), should be exactly 1")
+        
+        analysis['spaces'] = validated_spaces
+        print(f"Validation complete: {exterior_count} exterior, {len(validated_spaces) - exterior_count} interior boundaries")
+        
+        return analysis
 
     def analyze_elevation(self, image_path: str) -> Dict:
         """

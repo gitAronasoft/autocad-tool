@@ -82,48 +82,87 @@ def process_file():
         return jsonify({'success': False, 'error': f'Processing error: {str(e)}'})
 
 def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1):
-    """Process a PDF file using AI analysis and return DXF results"""
+    """Process a PDF file using AI analysis and return DXF results with improved validation"""
     try:
         # Default trace options to all True if not provided
         if trace_options is None:
             trace_options = {'trace_walls': True, 'trace_doors': True, 'trace_windows': True}
         
-        # Initialize PDF converter
+        print("\n" + "="*60)
+        print("STEP 1: PDF VALIDATION AND CONVERSION")
+        print("="*60)
+        
+        # Initialize PDF converter with optimal settings
         pdf_converter = PDFConverter(dpi=300)
         
-        # Validate PDF
+        # Validate PDF file
+        print("Validating PDF file...")
         is_valid, error_msg = pdf_converter.validate_pdf(filepath)
         if not is_valid:
-            return {'success': False, 'error': error_msg}
+            return {
+                'success': False, 
+                'error': f'PDF validation failed: {error_msg}. Please ensure you upload a valid PDF file.'
+            }
+        print("✓ PDF validation passed")
         
-        # Get page count
+        # Get page count and validate page number
         page_count = pdf_converter.get_page_count(filepath)
-        print(f"PDF has {page_count} page(s). Processing page {page_num}...")
+        print(f"PDF contains {page_count} page(s)")
         
-        # Convert PDF to images
+        if page_num < 1 or page_num > page_count:
+            return {
+                'success': False,
+                'error': f'Invalid page number {page_num}. PDF has {page_count} page(s). Please select a page between 1 and {page_count}.'
+            }
+        
+        print(f"Processing page {page_num} of {page_count}...")
+        
+        # Convert PDF to high-quality images with preprocessing
+        print("Converting PDF to images with quality enhancement...")
         image_paths = pdf_converter.convert_to_images(filepath, output_dir='uploads')
         
         if not image_paths:
-            return {'success': False, 'error': 'Could not convert PDF to images'}
+            return {
+                'success': False, 
+                'error': 'PDF to image conversion failed. The PDF may be corrupted or in an unsupported format.'
+            }
         
-        # Select the requested page (default to first page)
-        if page_num > len(image_paths):
-            page_num = 1
+        print(f"✓ Successfully converted {len(image_paths)} page(s) to images")
         
+        # Select the requested page
         image_path = image_paths[page_num - 1]
         print(f"Using image: {image_path}")
         
-        # Step 1: Determine drawing type (floor plan or elevation) and validate it's a drawing
-        print("Analyzing drawing type...")
-        drawing_type_result = analyzer.analyze_drawing_type(image_path)
-        drawing_type = drawing_type_result.get('type', 'floor_plan')
-        confidence = drawing_type_result.get('confidence', 0)
+        print("\n" + "="*60)
+        print("STEP 2: AI DRAWING TYPE DETECTION")
+        print("="*60)
         
-        print(f"Drawing type: {drawing_type} (confidence: {confidence:.2f})")
+        # Determine drawing type (floor plan or elevation) and validate
+        print("Analyzing drawing type with AI...")
+        try:
+            drawing_type_result = analyzer.analyze_drawing_type(image_path)
+            drawing_type = drawing_type_result.get('type', 'floor_plan')
+            confidence = drawing_type_result.get('confidence', 0)
+            reasoning = drawing_type_result.get('reasoning', 'N/A')
+            
+            print(f"Detected drawing type: {drawing_type.upper()}")
+            print(f"Confidence: {confidence:.1%}")
+            print(f"Reasoning: {reasoning}")
+            
+        except Exception as e:
+            # Clean up temp images before returning error
+            for img_path in image_paths:
+                try:
+                    os.remove(img_path)
+                except:
+                    pass
+            return {
+                'success': False,
+                'error': f'AI drawing type analysis failed: {str(e)}. Please try again or contact support.'
+            }
         
         # Validate this is actually an architectural drawing
         if drawing_type not in ['floor_plan', 'elevation']:
-            # Clean up temp images before returning error
             for img_path in image_paths:
                 try:
                     os.remove(img_path)
@@ -131,12 +170,11 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
                     pass
             return {
                 'success': False,
-                'error': 'The uploaded PDF does not appear to contain an architectural drawing. Please upload a PDF with floor plans or elevation drawings.'
+                'error': f'The uploaded file does not appear to be an architectural drawing (detected as: {drawing_type}). Please upload a PDF containing floor plans or elevation drawings.'
             }
         
-        # Check confidence level - if AI is uncertain, reject it
+        # Check confidence level - if AI is uncertain, warn the user
         if confidence < 0.5:
-            # Clean up temp images before returning error
             for img_path in image_paths:
                 try:
                     os.remove(img_path)
@@ -144,26 +182,63 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
                     pass
             return {
                 'success': False,
-                'error': f'Unable to identify architectural drawing in PDF (confidence: {confidence:.0%}). Please ensure the PDF contains clear architectural drawings.'
+                'error': f'Low confidence in drawing identification ({confidence:.0%}). The image may be unclear, rotated, or not a standard architectural drawing. Please ensure the PDF contains clear, properly oriented architectural drawings.'
             }
         
-        # Step 2: Analyze the drawing based on type
-        if drawing_type == 'floor_plan':
-            print("Analyzing floor plan...")
-            analysis_result = analyzer.analyze_floor_plan(image_path)
-            print(f"DEBUG - AI found {len(analysis_result.get('spaces', []))} wall boundaries:")
-            for i, space in enumerate(analysis_result.get('spaces', [])):
-                coords = space.get('coordinates', [])
-                print(f"  Space {i+1} ({space.get('type')}): {len(coords)} coordinate points")
-                if coords:
-                    print(f"    Sample coords: {coords[:3]}...")
-        else:
-            print("Analyzing elevation...")
-            analysis_result = analyzer.analyze_elevation(image_path)
+        print("✓ Drawing type validated")
+        
+        print("\n" + "="*60)
+        print("STEP 3: AI WALL BOUNDARY DETECTION")
+        print("="*60)
+        
+        # Analyze the drawing to detect wall boundaries
+        try:
+            if drawing_type == 'floor_plan':
+                print("Analyzing floor plan for wall boundaries...")
+                analysis_result = analyzer.analyze_floor_plan(image_path)
+                
+                # Log detected boundaries
+                spaces = analysis_result.get('spaces', [])
+                exterior_count = sum(1 for s in spaces if 'exterior' in s.get('type', '').lower())
+                interior_count = len(spaces) - exterior_count
+                
+                print(f"✓ Detected {exterior_count} exterior boundary(ies)")
+                print(f"✓ Detected {interior_count} interior boundary(ies)")
+                
+                for i, space in enumerate(spaces):
+                    coords = space.get('coordinates', [])
+                    space_type = space.get('type', 'unknown')
+                    print(f"  Boundary {i+1} ({space_type}): {len(coords)} coordinate points")
+            else:
+                print("Analyzing elevation for doors and windows...")
+                analysis_result = analyzer.analyze_elevation(image_path)
+                elements = analysis_result.get('elements', [])
+                print(f"✓ Detected {len(elements)} architectural elements")
+                
+        except ValueError as e:
+            # Handle validation errors from the analyzer
+            for img_path in image_paths:
+                try:
+                    os.remove(img_path)
+                except:
+                    pass
+            return {
+                'success': False,
+                'error': f'Wall boundary analysis failed: {str(e)}. The drawing may be too complex or unclear for automatic detection.'
+            }
+        except Exception as e:
+            for img_path in image_paths:
+                try:
+                    os.remove(img_path)
+                except:
+                    pass
+            return {
+                'success': False,
+                'error': f'AI analysis error: {str(e)}. Please try again or contact support.'
+            }
         
         # Validate analysis produced results
         if not analysis_result or (not analysis_result.get('spaces') and not analysis_result.get('elements')):
-            # Clean up temp images before returning error
             for img_path in image_paths:
                 try:
                     os.remove(img_path)
@@ -171,52 +246,108 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
                     pass
             return {
                 'success': False,
-                'error': 'No architectural elements detected in the drawing. Please ensure the PDF contains clear walls, doors, or windows.'
+                'error': 'No architectural elements detected in the drawing. Please ensure the PDF contains clear, visible walls, doors, or windows. The drawing may need to be higher quality or more clearly defined.'
             }
         
         # Add drawing type to results
         analysis_result['drawing_type'] = drawing_type
+        print("✓ AI analysis completed successfully")
         
-        # Step 3: Use AI coordinates directly for maximum accuracy
-        print("Creating DXF with AI-detected boundaries...")
+        print("\n" + "="*60)
+        print("STEP 4: DXF GENERATION WITH WALL HIGHLIGHTS")
+        print("="*60)
+        
+        # Create new DXF document
+        print("Creating new DXF document...")
         autocad_clean = AutoCADIntegration()
-        autocad_clean.create_new_dxf()
+        if not autocad_clean.create_new_dxf():
+            for img_path in image_paths:
+                try:
+                    os.remove(img_path)
+                except:
+                    pass
+            return {
+                'success': False,
+                'error': 'Failed to create DXF document. Please try again.'
+            }
+        print("✓ DXF document created")
         
-        # Insert PDF image as raster underlay
-        print("Inserting PDF as raster underlay...")
+        # Insert PDF image as raster underlay for reference
+        print("Inserting original drawing as underlay...")
         autocad_clean.insert_pdf_as_geometry(image_path, analysis_result)
+        print("✓ Original drawing inserted on ORIGINAL_DRAWING layer")
         
-        # Get image dimensions for coordinate scaling
+        # Get image dimensions for accurate coordinate scaling
         from PIL import Image
         with Image.open(image_path) as img:
             image_dimensions = img.size  # (width, height)
+        print(f"Image dimensions: {image_dimensions[0]}x{image_dimensions[1]} pixels")
         
-        # Use AI coordinates directly (MOST ACCURATE - no edge detection!)
-        print("Extracting wall boundaries from AI analysis (using precise AI coordinates)...")
-        wall_boundaries = autocad_clean.detect_wall_boundaries_from_ai(analysis_result, image_dimensions, trace_options)
+        # Convert AI coordinates to DXF coordinates
+        print("Converting AI coordinates to DXF format...")
+        wall_boundaries = autocad_clean.detect_wall_boundaries_from_ai(
+            analysis_result, 
+            image_dimensions, 
+            trace_options
+        )
         
-        # Draw the detected wall boundaries as highlights ON TOP of original geometry
-        # This preserves both the original drawing AND the highlights
+        exterior_count = len(wall_boundaries.get('outer_boundaries', []))
+        interior_count = len(wall_boundaries.get('inner_boundaries', []))
+        print(f"✓ Converted {exterior_count} exterior + {interior_count} interior boundaries")
+        
+        # Draw wall boundary highlights on dedicated layers
+        print("Drawing wall boundary highlights...")
         commands_executed = autocad_clean.draw_wall_boundary_highlights(wall_boundaries)
         
-        # IMPORTANT: The ORIGINAL_DRAWING layer now contains the actual PDF geometry
-        # The highlight layers (EXTERIOR_WALL_HIGHLIGHT, INTERIOR_WALL_HIGHLIGHT) are on top
+        if commands_executed == 0:
+            for img_path in image_paths:
+                try:
+                    os.remove(img_path)
+                except:
+                    pass
+            return {
+                'success': False,
+                'error': 'No wall boundaries could be drawn. The AI may not have detected valid boundaries in the drawing.'
+            }
         
-        # Collect ALL layer names including ORIGINAL_DRAWING (which contains the actual drawing)
+        print(f"✓ Drew {commands_executed} wall boundary highlights")
+        
+        # Collect and validate layers
         layers_created = []
         all_layers = autocad_clean.list_layers()
         for layer in all_layers:
             layer_name = layer.get('name')
-            if layer_name and layer_name != '0':  # Include ORIGINAL_DRAWING layer
+            if layer_name and layer_name != '0':
                 layers_created.append(layer_name)
         
         print(f"Created layers: {', '.join(layers_created)}")
-        print("NOTE: ORIGINAL_DRAWING layer contains the actual PDF geometry (5000+ line segments)")
+        
+        # Validate required layers exist
+        required_layers = ['ORIGINAL_DRAWING', 'EXTERIOR_WALL_HIGHLIGHT', 'INTERIOR_WALL_HIGHLIGHT']
+        missing_layers = [l for l in required_layers if l not in layers_created]
+        if 'ORIGINAL_DRAWING' in missing_layers:
+            print("Note: ORIGINAL_DRAWING layer may be empty (no vector trace available)")
+        
+        print("\n" + "="*60)
+        print("STEP 5: SAVING OUTPUT FILES")
+        print("="*60)
         
         # Save output DXF
         output_filename = f"processed_{os.path.splitext(os.path.basename(filepath))[0]}.dxf"
         output_path = os.path.join('outputs', output_filename)
-        autocad_clean.save_dxf(output_path)
+        
+        if not autocad_clean.save_dxf(output_path):
+            for img_path in image_paths:
+                try:
+                    os.remove(img_path)
+                except:
+                    pass
+            return {
+                'success': False,
+                'error': 'Failed to save DXF file. Please try again.'
+            }
+        
+        print(f"✓ Saved DXF: {output_path}")
         
         # Copy the image file to outputs folder so DXF can reference it
         import shutil
@@ -224,19 +355,30 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
         output_image_path = os.path.join('outputs', output_image_filename)
         try:
             shutil.copy(image_path, output_image_path)
-            print(f"Copied image underlay to: {output_image_path}")
+            print(f"✓ Saved reference image: {output_image_path}")
         except Exception as e:
             print(f"Warning: Could not copy image file: {e}")
         
-        print(f"Saved DXF output with {commands_executed} elements to {output_path}")
-        
         # Clean up temporary image files (keep the one we copied to outputs)
+        print("Cleaning up temporary files...")
+        cleanup_count = 0
         for img_path in image_paths:
             if img_path != output_image_path:
                 try:
                     os.remove(img_path)
+                    cleanup_count += 1
                 except:
                     pass
+        print(f"✓ Cleaned up {cleanup_count} temporary file(s)")
+        
+        print("\n" + "="*60)
+        print("PROCESSING COMPLETE!")
+        print("="*60)
+        print(f"✓ Output DXF: {output_filename}")
+        print(f"✓ Layers created: {', '.join(layers_created)}")
+        print(f"✓ Wall boundaries: {exterior_count} exterior + {interior_count} interior")
+        print(f"✓ Total elements: {commands_executed}")
+        print("="*60 + "\n")
         
         return {
             'success': True,
@@ -246,6 +388,8 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
                 'elements_detected': commands_executed,
                 'measurements_summary': {
                     'total_walls': len(analysis_result.get('spaces', [])),
+                    'exterior_boundaries': exterior_count,
+                    'interior_boundaries': interior_count,
                     'total_doors': len([e for e in analysis_result.get('elements', []) if 'door' in e.get('type', '').lower()]),
                     'total_windows': len([e for e in analysis_result.get('elements', []) if 'window' in e.get('type', '').lower()]),
                     'perimeter_length': 0,
