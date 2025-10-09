@@ -272,28 +272,34 @@ def process_pdf_file(filepath, analyzer, autocad, trace_options=None, page_num=1
             }
         print("✓ DXF document created")
         
-        # Insert PDF image as raster underlay for reference
-        print("Inserting original drawing as underlay...")
-        autocad_clean.insert_pdf_as_geometry(image_path, analysis_result)
-        print("✓ Original drawing inserted on ORIGINAL_DRAWING layer")
+        # Insert PDF actual vector content (or image as fallback) for complete drawing
+        print("Inserting original drawing content...")
+        autocad_clean.insert_pdf_as_geometry(filepath, image_path, analysis_result, page_num - 1)
+        print("✓ Original drawing content inserted on ORIGINAL_DRAWING layer")
         
-        # Get image dimensions for accurate coordinate scaling
-        from PIL import Image
-        with Image.open(image_path) as img:
-            image_dimensions = img.size  # (width, height)
-        print(f"Image dimensions: {image_dimensions[0]}x{image_dimensions[1]} pixels")
-        
-        # Convert AI coordinates to DXF coordinates
-        print("Converting AI coordinates to DXF format...")
-        wall_boundaries = autocad_clean.detect_wall_boundaries_from_ai(
-            analysis_result, 
-            image_dimensions, 
-            trace_options
-        )
+        # Detect wall boundaries from actual vector geometry (not AI guessing)
+        print("Analyzing vector geometry to detect actual wall boundaries...")
+        wall_boundaries = autocad_clean.detect_wall_boundaries_from_vector_geometry()
         
         exterior_count = len(wall_boundaries.get('outer_boundaries', []))
         interior_count = len(wall_boundaries.get('inner_boundaries', []))
-        print(f"✓ Converted {exterior_count} exterior + {interior_count} interior boundaries")
+        
+        # If vector detection failed, fall back to AI method
+        if exterior_count == 0 and interior_count == 0:
+            print("Vector detection found no walls, trying AI method as fallback...")
+            from PIL import Image
+            with Image.open(image_path) as img:
+                image_dimensions = img.size
+            wall_boundaries = autocad_clean.detect_wall_boundaries_from_ai(
+                analysis_result, 
+                image_dimensions, 
+                trace_options
+            )
+            exterior_count = len(wall_boundaries.get('outer_boundaries', []))
+            interior_count = len(wall_boundaries.get('inner_boundaries', []))
+            print(f"✓ AI fallback: {exterior_count} exterior + {interior_count} interior boundaries")
+        else:
+            print(f"✓ Vector analysis: {exterior_count} exterior + {interior_count} interior wall boundaries")
         
         # Draw wall boundary highlights on dedicated layers
         print("Drawing wall boundary highlights...")

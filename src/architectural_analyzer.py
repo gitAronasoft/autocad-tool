@@ -10,12 +10,14 @@ from typing import Dict, List, Tuple, Optional
 
 # the newest OpenAI model is "gpt-4o" which was released August 7, 2025.
 # do not change this unless explicitly requested by the user
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai = None
 if OPENAI_API_KEY:
     openai = OpenAI(api_key=OPENAI_API_KEY)
+    print(f"✓ OpenAI API key loaded successfully (key starts with: {OPENAI_API_KEY[:8]}...)")
 else:
     print("Warning: OPENAI_API_KEY not found. AI analysis will be disabled.")
+    print("Please set your OpenAI API key in the Secrets tool.")
 
 class ArchitecturalAnalyzer:
     """
@@ -113,38 +115,45 @@ class ArchitecturalAnalyzer:
         base64_image = self.encode_image_to_base64(image_path)
 
         prompt = """
-        You are an expert architectural analyst. Analyze this floor plan and identify wall boundaries with MAXIMUM PRECISION.
+        You are an expert architectural analyst. Analyze this floor plan and trace wall boundaries with MAXIMUM DETAIL AND PRECISION.
 
         CRITICAL REQUIREMENTS:
         
         1. OUTER BOUNDARY (Building Perimeter):
-           - Identify the COMPLETE outer perimeter of the building as ONE closed polyline
+           - Trace the COMPLETE outer perimeter of the building following EVERY wall segment
            - This is the exterior wall that forms the building's outer edge
            - Trace along the CENTER of the wall thickness
            - Must be a CLOSED path (first point MUST equal last point)
-           - Include ALL corners and direction changes
+           - Include EVERY corner, jog, recess, and direction change
+           - Use MANY coordinate points (minimum 20-50 points for typical buildings)
+           - Follow the wall precisely - DO NOT simplify or approximate
         
-        2. INNER BOUNDARIES (Room Dividers):
-           - Identify ALL interior walls as SEPARATE closed polylines
-           - Each room's perimeter should be one closed boundary
+        2. INNER BOUNDARIES (Major Room Perimeters):
+           - Identify 5-10 major interior room boundaries (bedrooms, living areas, bathrooms, garage)
+           - Trace each room's perimeter as a detailed closed polyline
            - Trace along the CENTER of each wall thickness
            - Each boundary MUST be CLOSED (first point = last point)
-           - Include hallways, closets, and all interior spaces
+           - Use MANY coordinate points per room (minimum 10-30 points per room)
+           - Include EVERY corner and wall segment
+           - Focus on major rooms, not every tiny closet
         
         COORDINATE REQUIREMENTS:
         - Provide EXACT pixel coordinates [x, y] where:
           * x = horizontal position (0 = left edge of image)
           * y = vertical position (0 = top edge of image)
-        - Include enough points to capture ALL corners and curves
-        - Minimum 4 points for rectangular spaces
+        - Include a coordinate point for EVERY corner and wall segment change
+        - For a typical residential floor plan, expect:
+          * Exterior boundary: 20-80 coordinate points
+          * Each interior room: 10-40 coordinate points
         - First point MUST equal last point for closed paths
-        - Accuracy is CRITICAL - measure precisely
+        - DO NOT SIMPLIFY - trace every wall segment precisely
         
         IMPORTANT RULES:
         - There should be EXACTLY ONE "exterior" type boundary (the building perimeter)
-        - All other boundaries should be "interior" type (room dividers)
-        - Each boundary must form a complete, closed loop
-        - Do NOT include partial walls or open paths
+        - Include 5-10 "interior" type boundaries (major rooms only)
+        - Each boundary must form a complete, closed loop with MANY points
+        - DO NOT use simple rectangles - follow actual wall paths with all corners
+        - DO NOT include partial walls or open paths
         
         Respond in JSON format:
         {
@@ -152,43 +161,45 @@ class ArchitecturalAnalyzer:
             "spaces": [
                 {
                     "type": "exterior",
-                    "coordinates": [[x1,y1], [x2,y2], ..., [x1,y1]],
+                    "coordinates": [[x1,y1], [x2,y2], [x3,y3], ..., [x1,y1]],
                     "layer_name": "EXTERIOR_WALL_HIGHLIGHT",
                     "description": "Complete building perimeter"
                 },
                 {
                     "type": "interior",
-                    "coordinates": [[x1,y1], [x2,y2], ..., [x1,y1]],
+                    "coordinates": [[x1,y1], [x2,y2], [x3,y3], ..., [x1,y1]],
                     "layer_name": "INTERIOR_WALL_HIGHLIGHT",
-                    "description": "Room/space name"
+                    "description": "Room name (e.g., Master Bedroom)"
                 }
             ]
         }
         
-        Example for a house with 2 rooms:
+        Example for an L-shaped building with 2 detailed rooms:
         {
             "floor_type": "main_floor",
             "spaces": [
                 {
                     "type": "exterior",
-                    "coordinates": [[100,50], [500,50], [500,300], [100,300], [100,50]],
+                    "coordinates": [[100,50], [500,50], [500,200], [400,200], [400,300], [100,300], [100,50]],
                     "layer_name": "EXTERIOR_WALL_HIGHLIGHT",
-                    "description": "Building outer perimeter"
+                    "description": "Building outer perimeter with L-shape"
                 },
                 {
                     "type": "interior",
-                    "coordinates": [[150,100], [250,100], [250,250], [150,250], [150,100]],
+                    "coordinates": [[150,100], [250,100], [250,150], [230,150], [230,250], [150,250], [150,100]],
                     "layer_name": "INTERIOR_WALL_HIGHLIGHT",
-                    "description": "Living room"
+                    "description": "Living room with alcove"
                 },
                 {
                     "type": "interior",
-                    "coordinates": [[300,100], [450,100], [450,250], [300,250], [300,100]],
+                    "coordinates": [[300,100], [450,100], [450,250], [300,250], [300,180], [320,180], [320,150], [300,150], [300,100]],
                     "layer_name": "INTERIOR_WALL_HIGHLIGHT",
-                    "description": "Bedroom"
+                    "description": "Bedroom with closet recess"
                 }
             ]
         }
+        
+        REMEMBER: Use MANY coordinate points to accurately trace every wall segment and corner!
         """
 
         response = openai.chat.completions.create(

@@ -7,6 +7,7 @@ from PIL import Image
 import math
 from collections import defaultdict
 from .enhanced_geometry_processor import EnhancedGeometryProcessor
+from .wall_geometry_detector import WallGeometryDetector
 
 class AutoCADIntegration:
     """
@@ -17,6 +18,7 @@ class AutoCADIntegration:
         self.current_doc = None
         self.modelspace = None
         self.enhanced_processor = EnhancedGeometryProcessor()
+        self.wall_detector = WallGeometryDetector()
     
     def load_dxf_file(self, file_path: str) -> bool:
         """Load an existing DXF or DWG file"""
@@ -163,8 +165,11 @@ class AutoCADIntegration:
             print(f"Error drawing arc: {e}")
             return False
     
-    def insert_pdf_as_geometry(self, image_path: str, analysis_result: Dict):
-        """Insert PDF image as a raster underlay in DXF and prepare for boundary detection"""
+    def insert_pdf_as_geometry(self, pdf_path: str, image_path: str, analysis_result: Dict, page_num: int = 0):
+        """
+        Insert PDF actual vector content into DXF for complete drawing reproduction
+        Falls back to image if no vector content is available
+        """
         if self.current_doc is None or self.modelspace is None:
             print("No DXF document loaded")
             return False
@@ -174,8 +179,9 @@ class AutoCADIntegration:
             import numpy as np
             from PIL import Image
             import os
+            from .pdf_vector_extractor import PDFVectorExtractor
             
-            # Load image
+            # Load image for dimensions
             img = cv2.imread(image_path)
             if img is None:
                 print(f"Could not load image: {image_path}")
@@ -189,57 +195,54 @@ class AutoCADIntegration:
             dxf_width = img_width * scale_factor
             dxf_height = img_height * scale_factor
             
-            print(f"Inserting {img_width}x{img_height} PDF image as DXF underlay ({dxf_width:.1f}x{dxf_height:.1f} units)")
+            print(f"Processing {img_width}x{img_height} drawing for DXF ({dxf_width:.1f}x{dxf_height:.1f} units)")
             
-            # Create ORIGINAL_DRAWING layer for the traced drawing
+            # Create ORIGINAL_DRAWING layer
             self.create_layer("ORIGINAL_DRAWING", color=8, linetype='CONTINUOUS')
             
-            # Method 1: Try to insert image as raster entity (best quality if viewer supports it)
-            image_inserted = False
-            try:
-                # Get absolute path for image
-                abs_image_path = os.path.abspath(image_path)
-                
-                # Insert the image at origin with proper scaling
-                image_def = self.current_doc.add_image_def(filename=abs_image_path, size_in_pixel=(img_width, img_height))
-                image_entity = self.modelspace.add_image(image_def=image_def, insert=(0, 0), size_in_units=(dxf_width, dxf_height))
-                image_entity.dxf.layer = "ORIGINAL_DRAWING"
-                
-                print(f"✅ Inserted PDF image as raster underlay in DXF (IMAGE entity)")
-                image_inserted = True
-            except Exception as e:
-                print(f"⚠️ Could not insert image as raster entity: {e}")
+            # Try to extract actual vector content from PDF
+            vector_extractor = PDFVectorExtractor()
+            has_vector, vector_msg = vector_extractor.check_pdf_has_vector_content(pdf_path, page_num)
             
-            # Method 2: Trace line segments from edge detection as backup geometry (if available)
-            # This ensures the drawing is ALWAYS visible even if IMAGE entity doesn't render
-            if hasattr(self, '_all_contours') and self._all_contours:
-                print("Creating vector trace of original drawing for maximum compatibility...")
+            vector_extracted = False
+            if has_vector:
+                print(f"PDF has vector content: {vector_msg}")
+                print("Extracting actual vector paths from PDF...")
                 
-                # Trace significant line segments detected from the image
-                line_count = 0
-                for i, contour in enumerate(self._all_contours[:500]):  # Limit to avoid excessive data
-                    area = cv2.contourArea(contour)
-                    if area > 50:  # Only significant contours
-                        # Convert contour to line segments
-                        for j in range(len(contour)):
-                            p1 = contour[j][0]
-                            p2 = contour[(j + 1) % len(contour)][0]
-                            
-                            # Convert to DXF coordinates
-                            x1 = p1[0] * scale_factor
-                            y1 = (img_height - p1[1]) * scale_factor
-                            x2 = p2[0] * scale_factor
-                            y2 = (img_height - p2[1]) * scale_factor
-                            
-                            # Draw line on ORIGINAL_DRAWING layer
-                            self.draw_line((x1, y1), (x2, y2), "ORIGINAL_DRAWING")
-                            line_count += 1
+                extraction_result = vector_extractor.extract_vector_paths_to_dxf(
+                    pdf_path, 
+                    self.current_doc, 
+                    page_num, 
+                    target_width=dxf_width
+                )
                 
-                print(f"✅ Traced {line_count} line segments from original drawing on ORIGINAL_DRAWING layer")
-                print(f"   Layer ORIGINAL_DRAWING contains {'raster image + ' if image_inserted else ''}vector geometry")
+                if extraction_result.get('success'):
+                    vector_count = extraction_result.get('vector_count', 0)
+                    print(f"✅ Successfully extracted {vector_count} vector entities from PDF")
+                    print(f"   All actual drawing content is now in the DXF on ORIGINAL_DRAWING layer")
+                    vector_extracted = True
+                else:
+                    print(f"⚠️ Vector extraction failed: {extraction_result.get('error', 'Unknown error')}")
             else:
-                print("⚠️ No edge detection contours available for vector tracing")
-                print(f"   Layer ORIGINAL_DRAWING contains {'raster image only' if image_inserted else 'no geometry'}")
+                print(f"⚠️ {vector_msg}")
+                print("   PDF appears to be a raster/scanned document")
+            
+            # If no vector content, fall back to image reference
+            if not vector_extracted:
+                print("Falling back to image reference method...")
+                
+                try:
+                    # Get absolute path for image
+                    abs_image_path = os.path.abspath(image_path)
+                    
+                    # Insert the image at origin with proper scaling
+                    image_def = self.current_doc.add_image_def(filename=abs_image_path, size_in_pixel=(img_width, img_height))
+                    image_entity = self.modelspace.add_image(image_def=image_def, insert=(0, 0), size_in_units=(dxf_width, dxf_height))
+                    image_entity.dxf.layer = "ORIGINAL_DRAWING"
+                    
+                    print(f"✅ Inserted raster image as reference on ORIGINAL_DRAWING layer")
+                except Exception as e:
+                    print(f"⚠️ Could not insert image reference: {e}")
             
             # Process image for boundary detection (for fallback edge detection if needed)
             try:
@@ -275,7 +278,7 @@ class AutoCADIntegration:
             return True
             
         except Exception as e:
-            print(f"Warning: Could not insert PDF as geometry: {e}")
+            print(f"Warning: Could not insert PDF drawing: {e}")
             import traceback
             traceback.print_exc()
             print("Continuing without original drawing geometry")
@@ -343,8 +346,63 @@ class AutoCADIntegration:
             'inner_boundaries': inner_boundaries
         }
     
-    def detect_wall_boundaries_from_geometry(self, trace_options: Dict) -> Dict:
-        """Detect outer and inner wall boundaries from the SAME contours used for drawing"""
+    def detect_wall_boundaries_from_vector_geometry(self) -> Dict:
+        """
+        Detect actual wall boundaries by analyzing vector geometry for parallel line pairs
+        This finds the REAL inner and outer edges of walls, not just room perimeters
+        """
+        if self.current_doc is None:
+            print("No DXF document loaded for wall detection")
+            return {'outer_boundaries': [], 'inner_boundaries': []}
+        
+        print("Detecting wall boundaries from vector geometry...")
+        
+        # Extract line entities from the DXF document
+        lines = self.wall_detector.extract_lines_from_dxf(self.current_doc, "ORIGINAL_DRAWING")
+        
+        if len(lines) < 10:
+            print("Not enough lines for wall detection, falling back to contour method")
+            return self.detect_wall_boundaries_from_geometry_fallback()
+        
+        # Find parallel line pairs (potential walls)
+        parallel_pairs = self.wall_detector.find_parallel_line_pairs()
+        
+        if not parallel_pairs:
+            print("No parallel line pairs found, falling back to contour method")
+            return self.detect_wall_boundaries_from_geometry_fallback()
+        
+        # Trace wall boundaries (inner and outer edges)
+        boundaries = self.wall_detector.trace_wall_boundaries(parallel_pairs)
+        
+        # Classify as exterior vs interior walls
+        classified = self.wall_detector.classify_exterior_interior(boundaries)
+        
+        # Convert to expected format
+        outer_boundaries = []
+        for boundary_points in classified.get('exterior', []):
+            if len(boundary_points) >= 3:
+                outer_boundaries.append({
+                    'points': boundary_points,
+                    'type': 'exterior'
+                })
+        
+        inner_boundaries = []
+        for boundary_points in classified.get('interior', []):
+            if len(boundary_points) >= 3:
+                inner_boundaries.append({
+                    'points': boundary_points,
+                    'type': 'interior'
+                })
+        
+        print(f"Vector geometry detection: {len(outer_boundaries)} exterior, {len(inner_boundaries)} interior wall boundaries")
+        
+        return {
+            'outer_boundaries': outer_boundaries,
+            'inner_boundaries': inner_boundaries
+        }
+    
+    def detect_wall_boundaries_from_geometry_fallback(self) -> Dict:
+        """Fallback: Detect outer and inner wall boundaries from contours (old method)"""
         if not hasattr(self, '_all_contours'):
             print("No contours available for boundary detection")
             return {'outer_boundaries': [], 'inner_boundaries': []}
@@ -356,7 +414,7 @@ class AutoCADIntegration:
         img_width, img_height = self._img_dimensions
         scale_factor = self._scale_factor
         
-        print(f"Analyzing {len(contours)} contours for wall boundaries...")
+        print(f"Analyzing {len(contours)} contours for wall boundaries (fallback method)...")
         
         # Calculate contour areas and sort by size
         contour_data = []
