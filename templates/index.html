@@ -154,17 +154,17 @@
 
                         <h6><strong>Output DXF Layers</strong></h6>
                         <div class="layer-example text-success">✓ ORIGINAL_DRAWING</div>
-                        <div class="layer-example text-warning">✓ [floor]_exterior</div>
-                        <div class="layer-example text-info">✓ [floor]_interior</div>
-                        <div class="layer-example text-primary">✓ [floor]_garage_wall</div>
+                        <div class="layer-example text-warning">✓ [floor]_exterior_outer</div>
+                        <div class="layer-example text-danger">✓ [floor]_exterior_inner</div>
+                        <div class="layer-example text-info">✓ [floor]_interior_walls</div>
 
                         <hr>
 
                         <h6><strong>Examples</strong></h6>
                         <p class="small">
-                            • <code>basement_exterior</code><br>
-                            • <code>main_floor_interior</code><br>
-                            • <code>second_floor_garage_wall</code>
+                            • <code>basement_exterior_outer</code><br>
+                            • <code>basement_exterior_inner</code><br>
+                            • <code>main_floor_interior_walls</code>
                         </p>
 
                         <hr>
@@ -300,9 +300,9 @@
                 <hr>
                 <p><strong>Boundaries Detected:</strong></p>
                 <ul class="mb-0">
-                    <li>Exterior: ${analysis.boundaries_detected.exterior}</li>
-                    <li>Interior: ${analysis.boundaries_detected.interior}</li>
-                    ${analysis.boundaries_detected.garage_wall ? '<li>Garage Wall: 1</li>' : ''}
+                    <li>Exterior Outer: ${analysis.boundaries_detected.exterior_outer || 0}</li>
+                    <li>Exterior Inner: ${analysis.boundaries_detected.exterior_inner || 0}</li>
+                    <li>Interior Walls: ${analysis.boundaries_detected.interior_walls || 0}</li>
                 </ul>
             `;
             

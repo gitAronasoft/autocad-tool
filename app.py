@@ -159,19 +159,10 @@ def process_pdf_drawing(filepath: str) -> dict:
                 dxf_builder.add_boundary(wall_coords, floor_type, 'interior_walls')
                 logger.info(f"  Added interior wall {i+1} ({len(wall_coords)} points)")
         
-        # Add garage wall if detected by AI
-        if metadata_result['has_garage'] and metadata_result.get('garage_wall'):
-            # Convert AI pixel coords to PDF points then to DXF
-            img_width = metadata['width_px']
-            img_height = metadata['height_px']
-            garage_pdf_coords = []
-            for x_px, y_px in metadata_result['garage_wall']:
-                x_pt = (x_px / img_width) * page_info['width_pt']
-                y_pt = (y_px / img_height) * page_info['height_pt']
-                garage_pdf_coords.append((x_pt, y_pt))
-            garage_coords = pdf_to_dxf(garage_pdf_coords)
-            dxf_builder.add_boundary(garage_coords, floor_type, 'garage_wall')
-            logger.info(f"  Added garage wall ({len(garage_coords)} points)")
+        # Note: Garage walls are included in interior_walls from vector detection
+        # AI only detects if garage exists (metadata_result['has_garage'])
+        if metadata_result['has_garage']:
+            logger.info(f"  Garage detected - walls included in vector detection")
         
         # Save DXF file
         dxf_builder.save()
@@ -193,14 +184,10 @@ def process_pdf_drawing(filepath: str) -> dict:
         if wall_boundaries['interior_walls']:
             layers_created.append(f'{floor_type}_interior_walls')
         
-        if metadata_result['has_garage']:
-            layers_created.append(f'{floor_type}_garage_wall')
-        
-        # Count boundaries
+        # Count boundaries (accurately reflect what was added to DXF)
         num_exterior_outer = 1 if wall_boundaries['exterior_outer'] else 0
         num_exterior_inner = 1 if wall_boundaries['exterior_inner'] else 0
         num_interior_walls = len(wall_boundaries['interior_walls'])
-        num_garage_wall = 1 if metadata_result['has_garage'] else 0
         
         return {
             'success': True,
@@ -212,8 +199,7 @@ def process_pdf_drawing(filepath: str) -> dict:
                 'boundaries_detected': {
                     'exterior_outer': num_exterior_outer,
                     'exterior_inner': num_exterior_inner,
-                    'interior_walls': num_interior_walls,
-                    'garage_wall': num_garage_wall
+                    'interior_walls': num_interior_walls
                 }
             },
             'download_url': f'/download/{output_filename}'

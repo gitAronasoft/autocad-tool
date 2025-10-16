@@ -77,12 +77,10 @@ class FloorPlanAnalyzer:
             logger.info("Received AI response, parsing JSON...")
             logger.debug(f"AI Response (first 500 chars): {content[:500]}")
             
-            # Extract JSON from response
+            # Extract JSON from response (metadata only)
             result = self._parse_ai_response(content, image.width, image.height)
             
-            logger.info(f"Floor plan analyzed: {result['floor_type']} (confidence: {result['confidence']:.0%})")
-            logger.info(f"  - Outer boundary: {len(result['outer_boundary'])} points")
-            logger.info(f"  - Inner boundaries: {len(result['inner_boundaries'])} found")
+            logger.info(f"Floor plan metadata: {result['floor_type']} (confidence: {result['confidence']:.0%})")
             logger.info(f"  - Garage detected: {result['has_garage']}")
             
             return result
@@ -92,75 +90,38 @@ class FloorPlanAnalyzer:
             raise Exception(f"Floor plan analysis failed: {str(e)}")
     
     def _create_analysis_prompt(self, img_width: int, img_height: int) -> str:
-        """Create comprehensive AI prompt for floor plan analysis"""
+        """Create AI prompt for metadata-only floor plan analysis"""
         return f"""You are an expert architectural drawing analyzer. This is a {img_width}x{img_height} pixel image of an architectural floor plan.
 
-YOUR TASK: Meticulously trace the EXACT wall boundaries as drawn in the floor plan.
+YOUR TASK: Analyze the floor plan and identify metadata ONLY. Wall boundaries will be traced separately using vector analysis.
 
-CRITICAL: DO NOT create approximations or simple rectangles. You MUST follow the ACTUAL drawn wall lines PRECISELY with many coordinate points to capture every corner, turn, and angle.
+WHAT TO IDENTIFY:
 
-UNDERSTANDING ARCHITECTURAL WALLS:
-- Walls are drawn with TWO parallel black lines (representing wall thickness)
-- You must trace BOTH the outer edge and inner edge of walls
-- Each wall boundary is a polygon that follows the drawn lines exactly
+1. FLOOR TYPE: Identify which floor level this plan represents
+   - Options: basement, main_floor, second_floor, third_floor, terrace
+   - Look for labels like "BASEMENT PLAN", "FIRST FLOOR", "SECOND FLOOR", etc.
+   - Consider room types (furnace room suggests basement, living room suggests main floor)
 
-WHAT TO TRACE:
+2. CONFIDENCE: Your confidence level in the floor type identification (0.0 to 1.0)
 
-1. EXTERIOR WALLS - OUTER EDGE:
-   - Trace the outermost black line of the building perimeter
-   - Follow every corner, jog, bump-out, and architectural feature EXACTLY
-   - This should trace around the OUTSIDE of the entire building
-   - Use 40-80 points to capture all detail
+3. GARAGE: Determine if there is a garage in this floor plan
+   - Look for labels like "GARAGE", "2-CAR GARAGE", etc.
+   - Look for garage door symbols
+   - If garage exists, set has_garage to true
 
-2. EXTERIOR WALLS - INNER EDGE (return as first item in inner_boundaries):
-   - Trace the innermost black line of exterior walls (facing the interior space)
-   - Follow every corner and detail EXACTLY, parallel to outer edge but offset by wall thickness
-   - Use 40-80 points to capture all detail
-
-3. INTERIOR WALLS (return as additional items in inner_boundaries):
-   - For EACH interior wall, trace both parallel edges
-   - Each wall becomes a separate closed polygon
-   - Follow the drawn lines precisely
-   - Use 15-40 points per wall to capture all details
-
-4. IDENTIFY: Floor type (basement, main_floor, second_floor, terrace)
-
-5. IF GARAGE EXISTS: Trace the wall separating conditioned space from garage
-
-CRITICAL REQUIREMENTS:
-✓ Trace ACTUAL drawn lines, not bounding boxes
-✓ Use MANY coordinate points (40-80 for perimeters, 15-40 for interior walls)
-✓ Capture EVERY corner, angle, bump-out, and architectural feature
-✓ Coordinates in pixels, (0,0) = top-left
-✓ Each polygon must be CLOSED (first point = last point)
-✗ DO NOT create simple 4-point rectangles
-✗ DO NOT approximate - trace exactly
+DO NOT trace any boundaries or coordinates. Only provide metadata.
 
 Return JSON in this EXACT structure:
 {{
   "floor_type": "basement|main_floor|second_floor|third_floor|terrace",
   "confidence": 0.95,
-  "has_garage": true|false,
-  "outer_boundary": [[x1,y1], [x2,y2], ... many points ..., [x1,y1]],
-  "inner_boundaries": [
-    [[x1,y1], [x2,y2], ... many points ..., [x1,y1]],
-    [[x1,y1], [x2,y2], ... points ..., [x1,y1]],
-    ... more interior walls ...
-  ],
-  "garage_wall": [[x1,y1], [x2,y2], ... points ..., [x1,y1]]
+  "has_garage": true|false
 }}
 
-COORDINATE CONSTRAINTS:
-- X must be 0 to {img_width}
-- Y must be 0 to {img_height}
-- If no garage, set "has_garage": false, "garage_wall": []
-
-REMEMBER: The quality of your tracing is judged by how accurately it follows the actual drawn wall lines. Use MANY points to capture all architectural detail.
-
-Return ONLY the JSON object."""
+Return ONLY the JSON object, no additional text or explanations."""
 
     def _parse_ai_response(self, content: str, img_width: int, img_height: int) -> dict:
-        """Parse and validate AI response"""
+        """Parse and validate AI response for metadata only"""
         try:
             # Remove markdown code blocks if present
             content = content.replace('```json', '').replace('```', '').strip()
@@ -176,8 +137,8 @@ Return ONLY the JSON object."""
             json_str = content[json_start:json_end]
             data = json.loads(json_str)
             
-            # Validate required fields
-            required_fields = ["floor_type", "confidence", "has_garage", "outer_boundary", "inner_boundaries"]
+            # Validate required metadata fields only
+            required_fields = ["floor_type", "confidence", "has_garage"]
             for field in required_fields:
                 if field not in data:
                     raise ValueError(f"Missing required field: {field}")
@@ -188,19 +149,11 @@ Return ONLY the JSON object."""
                 logger.warning(f"Unknown floor type '{data['floor_type']}', defaulting to 'main_floor'")
                 data["floor_type"] = "main_floor"
             
-            # Validate coordinates are within image bounds
-            data["outer_boundary"] = self._validate_boundary(data["outer_boundary"], img_width, img_height, "outer")
-            data["inner_boundaries"] = [
-                self._validate_boundary(b, img_width, img_height, f"inner_{i}")
-                for i, b in enumerate(data["inner_boundaries"])
-            ]
+            # Ensure confidence is between 0 and 1
+            data["confidence"] = max(0.0, min(1.0, float(data["confidence"])))
             
-            # Handle garage wall
-            if data["has_garage"] and "garage_wall" in data and data["garage_wall"]:
-                data["garage_wall"] = self._validate_boundary(data["garage_wall"], img_width, img_height, "garage")
-            else:
-                data["garage_wall"] = []
-                data["has_garage"] = False
+            # Ensure has_garage is boolean
+            data["has_garage"] = bool(data["has_garage"])
             
             return data
             

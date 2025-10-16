@@ -75,3 +75,23 @@
     - Original drawing preserved in ORIGINAL_DRAWING layer
     - DXF generated with accurate wall boundaries following actual drawn lines
 [x] 9. System now traces ACTUAL wall geometry instead of approximations
+
+## AI Prompt Fix - GPT-4o Refusal Issue (October 16, 2025)
+[x] 1. Identified issue: GPT-4o refusing to trace boundaries, returning "unable to trace" error
+[x] 2. Updated FloorPlanAnalyzer prompt to ONLY request metadata (floor type, garage, confidence)
+[x] 3. Removed all boundary tracing requests from AI prompt
+[x] 4. Updated _parse_ai_response to only parse metadata fields (no boundaries)
+[x] 5. Updated app.py to remove garage wall handling from AI response
+[x] 6. Fixed response structure to accurately report DXF layers (removed incorrect garage_wall layer)
+[x] 7. Flask workflow restarted successfully - running on port 5000
+[x] 8. Architect review: APPROVED - response now matches actual DXF content
+[x] 9. Tested processing: Vector detection working (2,611 segments → 334 boundaries)
+[x] 10. System fully operational: Vector detector for walls + AI for metadata only
+
+## Frontend Display Fix - Layer Information (October 16, 2025)
+[x] 1. Identified issue: Web UI showing "undefined" for boundary counts
+[x] 2. Root cause: Frontend looking for 'exterior' and 'interior' but backend sends 'exterior_outer', 'exterior_inner', 'interior_walls'
+[x] 3. Updated index.html template to match backend response structure
+[x] 4. Updated info panel to show correct layer names (exterior_outer, exterior_inner, interior_walls)
+[x] 5. Flask workflow restarted with fixes applied
+[x] 6. AutoCAD layers confirmed working correctly (cyan, magenta, yellow boundaries visible)
