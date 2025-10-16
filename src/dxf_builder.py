@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 class DXFBuilder:
     """Builds DXF files with proper layer organization"""
     
-    # Layer configuration
+    # Layer configuration with bright, vivid colors and wide boundaries
     LAYERS = {
-        "ORIGINAL_DRAWING": {"color": colors.WHITE, "description": "Original PDF vector content"},
-        "EXTERIOR_OUTER": {"color": colors.YELLOW, "description": "Outer edge of exterior walls"},
-        "EXTERIOR_INNER": {"color": colors.MAGENTA, "description": "Inner edge of exterior walls"},
-        "INTERIOR_WALLS": {"color": colors.CYAN, "description": "Interior wall boundaries"},
-        "GARAGE": {"color": colors.GREEN, "description": "Garage wall boundary"}
+        "ORIGINAL_DRAWING": {"color": colors.WHITE, "width": 0, "description": "Original PDF vector content"},
+        "EXTERIOR_OUTER": {"color": colors.RED, "width": 5.0, "description": "Outer edge of exterior walls - WIDE"},
+        "EXTERIOR_INNER": {"color": 30, "width": 5.0, "description": "Inner edge of exterior walls - WIDE"},  # Bright orange
+        "INTERIOR_WALLS": {"color": colors.CYAN, "width": 2.0, "description": "Interior wall boundaries"},
+        "GARAGE": {"color": colors.GREEN, "width": 2.0, "description": "Garage wall boundary"}
     }
     
     def __init__(self, output_path: str):
@@ -30,7 +30,7 @@ class DXFBuilder:
     def _create_layers(self):
         """Create all required layers with proper colors"""
         for layer_name, config in self.LAYERS.items():
-            self.doc.layers.add(
+            layer = self.doc.layers.add(
                 name=layer_name,
                 color=config["color"]
             )
@@ -192,17 +192,23 @@ class DXFBuilder:
                 color=layer_config["color"]
             )
         
-        # Add polyline on custom layer
-        self.msp.add_lwpolyline(
+        # Add WIDE polyline on custom layer with constant width for maximum visibility
+        layer_config = self.LAYERS.get(base_layer, self.LAYERS["EXTERIOR_OUTER"])
+        boundary_width = layer_config.get("width", 2.0)
+        
+        # Create polyline with constant width (makes it physically wide/thick)
+        polyline = self.msp.add_lwpolyline(
             coordinates,
             close=True,
             dxfattribs={
                 'layer': custom_layer_name,
-                'color': self.LAYERS[base_layer]["color"]
+                'color': layer_config["color"]
             }
         )
+        # Set constant width to make the boundary THICK and PROMINENT
+        polyline.dxf.const_width = boundary_width
         
-        logger.info(f"Added {boundary_type} boundary to layer '{custom_layer_name}' ({len(coordinates)} points)")
+        logger.info(f"Added {boundary_type} boundary to layer '{custom_layer_name}' ({len(coordinates)} points, width={boundary_width} units)")
     
     def _transform_point(self, point: tuple, page_height: float, scale: float) -> tuple:
         """

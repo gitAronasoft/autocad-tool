@@ -50,7 +50,7 @@ def process_file():
             return jsonify({'success': False, 'error': 'Invalid file type. Please upload PDF files only.'})
         
         # Save uploaded file
-        filename = secure_filename(file.filename)
+        filename = secure_filename(file.filename or 'uploaded.pdf')
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(filepath)
         
@@ -140,7 +140,7 @@ def process_pdf_drawing(filepath: str) -> dict:
                 dxf_coords.append((dxf_x, dxf_y))
             return dxf_coords
         
-        # Add exterior walls - outer boundary (building perimeter)
+        # Add ONLY exterior walls - outer and inner boundaries (main wall only)
         if wall_boundaries['exterior_outer']:
             outer_coords = pdf_to_dxf(wall_boundaries['exterior_outer'])
             dxf_builder.add_boundary(outer_coords, floor_type, 'exterior_outer')
@@ -152,17 +152,8 @@ def process_pdf_drawing(filepath: str) -> dict:
             dxf_builder.add_boundary(inner_coords, floor_type, 'exterior_inner')
             logger.info(f"  Added exterior INNER boundary ({len(inner_coords)} points)")
         
-        # Add interior walls
-        for i, interior_wall in enumerate(wall_boundaries['interior_walls']):
-            if interior_wall:
-                wall_coords = pdf_to_dxf(interior_wall)
-                dxf_builder.add_boundary(wall_coords, floor_type, 'interior_walls')
-                logger.info(f"  Added interior wall {i+1} ({len(wall_coords)} points)")
-        
-        # Note: Garage walls are included in interior_walls from vector detection
-        # AI only detects if garage exists (metadata_result['has_garage'])
-        if metadata_result['has_garage']:
-            logger.info(f"  Garage detected - walls included in vector detection")
+        # Interior walls are NOT highlighted - only showing outer main wall boundaries
+        logger.info(f"  Skipping {len(wall_boundaries['interior_walls'])} interior walls (main wall only mode)")
         
         # Save DXF file
         dxf_builder.save()
@@ -181,13 +172,9 @@ def process_pdf_drawing(filepath: str) -> dict:
         if wall_boundaries['exterior_inner']:
             layers_created.append(f'{floor_type}_exterior_inner')
         
-        if wall_boundaries['interior_walls']:
-            layers_created.append(f'{floor_type}_interior_walls')
-        
-        # Count boundaries (accurately reflect what was added to DXF)
+        # Count boundaries (only exterior walls - main wall only)
         num_exterior_outer = 1 if wall_boundaries['exterior_outer'] else 0
         num_exterior_inner = 1 if wall_boundaries['exterior_inner'] else 0
-        num_interior_walls = len(wall_boundaries['interior_walls'])
         
         return {
             'success': True,
@@ -198,8 +185,7 @@ def process_pdf_drawing(filepath: str) -> dict:
                 'layers_created': layers_created,
                 'boundaries_detected': {
                     'exterior_outer': num_exterior_outer,
-                    'exterior_inner': num_exterior_inner,
-                    'interior_walls': num_interior_walls
+                    'exterior_inner': num_exterior_inner
                 }
             },
             'download_url': f'/download/{output_filename}'
