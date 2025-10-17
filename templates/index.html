@@ -154,15 +154,15 @@
 
                         <h6><strong>Output DXF Layers</strong></h6>
                         <div class="layer-example text-success">✓ ORIGINAL_DRAWING</div>
-                        <div class="layer-example text-danger" style="font-weight: bold;">✓ [floor]_exterior_outer (RED - VERY WIDE)</div>
-                        <div class="layer-example text-warning" style="font-weight: bold;">✓ [floor]_exterior_inner (ORANGE - VERY WIDE)</div>
+                        <div class="layer-example" style="font-weight: bold; color: #FFD700;">✓ [floor]_exterior_outer (YELLOW - VERY WIDE)</div>
+                        <div class="layer-example" style="font-weight: bold; color: #FF00FF;">✓ [floor]_exterior_inner (MAGENTA - VERY WIDE)</div>
 
                         <hr>
 
                         <h6><strong>Examples</strong></h6>
                         <p class="small">
-                            • <code>basement_exterior_outer</code> (Red, 5.0 units wide)<br>
-                            • <code>basement_exterior_inner</code> (Orange, 5.0 units wide)<br>
+                            • <code>basement_exterior_outer</code> (Yellow, 5.0 units wide)<br>
+                            • <code>basement_exterior_inner</code> (Magenta, 5.0 units wide)<br>
                             • Thick, prominent highlighting for main walls only
                         </p>
 
@@ -299,8 +299,8 @@
                 <hr>
                 <p><strong>Boundaries Highlighted:</strong></p>
                 <ul class="mb-0">
-                    <li><span class="text-danger fw-bold">Exterior Outer:</span> ${analysis.boundaries_detected.exterior_outer || 0} (Red, very wide)</li>
-                    <li><span class="text-warning fw-bold">Exterior Inner:</span> ${analysis.boundaries_detected.exterior_inner || 0} (Orange, very wide)</li>
+                    <li><span style="color: #FFD700; font-weight: bold;">Exterior Outer:</span> ${analysis.boundaries_detected.exterior_outer || 0} (Yellow, very wide)</li>
+                    <li><span style="color: #FF00FF; font-weight: bold;">Exterior Inner:</span> ${analysis.boundaries_detected.exterior_inner || 0} (Magenta, very wide)</li>
                 </ul>
             `;
             

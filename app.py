@@ -6,7 +6,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from src.pdf_processor import PDFProcessor
 from src.floor_plan_analyzer import FloorPlanAnalyzer
 from src.dxf_builder import DXFBuilder
-from src.vector_wall_detector import VectorWallDetector
+from src.advanced_wall_detector import AdvancedWallDetector
 import traceback
 
 # Configure logging
@@ -92,9 +92,9 @@ def process_pdf_drawing(filepath: str) -> dict:
             image, metadata = processor.convert_to_image(0, dpi=300)
             logger.info(f"  Converted to {metadata['width_px']}x{metadata['height_px']} image")
         
-        # Step 2A: Vector-based wall detection (reliable geometric approach)
-        logger.info("Step 2A: Detecting walls from PDF vector geometry...")
-        wall_detector = VectorWallDetector()
+        # Step 2A: High-fidelity wall detection with fixed classification
+        logger.info("Step 2A: Detecting wall boundaries (high-fidelity mode)...")
+        wall_detector = AdvancedWallDetector()
         wall_boundaries = wall_detector.detect_walls(vector_paths, page_info['width_pt'], page_info['height_pt'])
         
         # Step 2B: AI Analysis - detect metadata only (floor type, garage)

@@ -12,11 +12,11 @@ logger = logging.getLogger(__name__)
 class DXFBuilder:
     """Builds DXF files with proper layer organization"""
     
-    # Layer configuration with bright, vivid colors and wide boundaries
+    # Layer configuration with AutoCAD standard colors and wide boundaries
     LAYERS = {
         "ORIGINAL_DRAWING": {"color": colors.WHITE, "width": 0, "description": "Original PDF vector content"},
-        "EXTERIOR_OUTER": {"color": colors.RED, "width": 5.0, "description": "Outer edge of exterior walls - WIDE"},
-        "EXTERIOR_INNER": {"color": 30, "width": 5.0, "description": "Inner edge of exterior walls - WIDE"},  # Bright orange
+        "EXTERIOR_OUTER": {"color": colors.YELLOW, "width": 5.0, "description": "Outer edge of exterior walls - YELLOW"},
+        "EXTERIOR_INNER": {"color": colors.MAGENTA, "width": 5.0, "description": "Inner edge of exterior walls - MAGENTA"},
         "INTERIOR_WALLS": {"color": colors.CYAN, "width": 2.0, "description": "Interior wall boundaries"},
         "GARAGE": {"color": colors.GREEN, "width": 2.0, "description": "Garage wall boundary"}
     }
