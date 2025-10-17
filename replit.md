@@ -3,6 +3,67 @@
 ## Overview
 This project is a SaaS application designed to automate the tracing of wall boundaries from PDF architectural drawings. It processes floor plans to identify inner and outer wall lines, including garage spaces, and generates DXF files compatible with AutoCAD. The DXF output includes the original drawing content and newly traced boundaries on properly named, distinct layers, facilitating easy measurement extraction. The ultimate vision is to create a tool capable of full automation, including measurement extraction and integration with other estimation tools, minimizing human intervention.
 
+
+## Product Vision & Roadmap
+
+### Stage 1: Floor Plans (CURRENT PRIORITY - MVP)
+**Objective**: Automatically trace wall boundaries in floor plan drawings
+
+**What It Does**:
+- Upload PDF architectural drawing (basement, main floor, second floor, etc.)
+- AI detects floor type automatically (basement/main/second/garage)
+- Traces **inner boundary** (interior wall line) 
+- Traces **outer boundary** (exterior wall line)
+- Detects **garage spaces** and traces garage wall (buffered/protected space)
+- Generates DXF with original drawing + boundary highlights
+
+**Layer Naming Convention**:
+- `[floor_type]_exterior_outer` - Outer edge of exterior walls (building perimeter)
+- `[floor_type]_exterior_inner` - Inner edge of exterior walls (conditioned space boundary)
+- `[floor_type]_interior_walls` - Interior wall boundaries (room dividers)
+- `[floor_type]_garage_wall` - Wall separating garage from conditioned space
+
+**Examples**:
+- `basement_exterior_outer`, `basement_exterior_inner`, `basement_interior_walls`
+- `main_floor_exterior_outer`, `main_floor_exterior_inner`, `main_floor_interior_walls`, `main_floor_garage_wall`
+- `second_floor_exterior_outer`, `second_floor_exterior_inner`, `second_floor_interior_walls`
+
+**Output**: DXF file ready for AutoCAD containing:
+- ORIGINAL_DRAWING layer - Complete PDF vector content (walls, dimensions, text, etc.)
+- Traced boundary layers with proper names
+- Ready for measurement extraction in AutoCAD
+
+**Success Criteria**:
+- AI correctly identifies floor type
+- Boundary traces are accurate
+- DXF opens in AutoCAD with all layers properly named
+- Processing time < 30 seconds per drawing
+
+### Stage 2: Elevations (FUTURE)
+**Objective**: Detect and trace doors/windows in elevation views
+
+**Features**:
+- Detect elevation type (front/back/left/right view)
+- Trace door shapes: `front_door_main`, `back_door_basement`
+- Trace window shapes: `front_window_main`, `left_window_basement`
+- Trace door windows: `front_door_window`
+- Layer naming: `[direction]_[element]_[floor]`
+
+**Output**: DXF with elevation elements traced on named layers
+
+### Stage 3: Advanced Automation (FUTURE)
+**Objective**: Full automation with measurements and batch processing
+
+**Features**:
+- Height calculations from elevation data
+- Automatic measurement extraction (area, perimeter, XYZ)
+- Excel export of all measurements
+- Batch processing of multiple drawings
+- Quality validation and error detection
+- Integration with HVAC/estimation tools
+
+**Vision**: Zero human intervention - upload → process → export measurements
+
 ## User Preferences
 - Communication: Simple, everyday language
 - Focus: Production-ready, accurate wall tracing
